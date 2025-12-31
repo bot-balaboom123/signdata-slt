@@ -43,7 +43,11 @@ LANGUAGE = [
 YT_CONFIG = {
     # Video quality and format
     # Use worst quality video with height >= 720p, or best video with height <= 480p
-    "format": "worstvideo[height>=720]/bestvideo[height<=480]",
+    "format": (
+        "worstvideo[height>=720][fps>=24]"
+        "/bestvideo[height>=480][height<720][fps>=24][fps<=60]"
+        "/bestvideo[height>=480][height<=1080][fps>=14]"
+    ),
 
     # Subtitle settings
     "writesubtitles": False,
