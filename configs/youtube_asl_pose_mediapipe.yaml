@@ -1,0 +1,7 @@
+dataset: youtube_asl
+
+pipeline:
+  mode: pose
+
+extractor:
+  name: mediapipe

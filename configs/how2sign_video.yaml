@@ -1,0 +1,7 @@
+dataset: how2sign
+
+pipeline:
+  mode: video
+
+extractor:
+  name: mediapipe

@@ -1,0 +1,7 @@
+dataset: youtube_asl
+
+pipeline:
+  mode: video
+
+extractor:
+  name: mediapipe
