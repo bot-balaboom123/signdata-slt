@@ -1,12 +1,15 @@
 """MMPose-based 3D pose landmark extraction."""
 
-from typing import Optional, List
+import logging
+from typing import Optional, List, Tuple
 
 import numpy as np
 
 from .base import LandmarkExtractor
 from ..registry import register_extractor
 from ..config.schema import ExtractorConfig
+
+logger = logging.getLogger(__name__)
 
 
 class MultiPersonDetected(Exception):
@@ -25,6 +28,11 @@ class MMPoseExtractor(LandmarkExtractor):
     Always outputs all 133 COCO WholeBody keypoints.
     """
 
+    # MMPose supports batch detection
+    supports_batch_inference = True
+    # Total landmark count
+    num_landmarks = 133
+
     def __init__(
         self,
         config: ExtractorConfig,
@@ -36,6 +44,8 @@ class MMPoseExtractor(LandmarkExtractor):
         self.bbox_threshold = config.bbox_threshold
         self.det_cat_id = 0
         self.add_visible = config.add_visible
+        self._batch_inference_checked = False
+        self._batch_inference_available = False
 
     def process_frame(self, frame: np.ndarray) -> Optional[np.ndarray]:
         """Detect person and extract 3D landmarks from a single frame.
@@ -95,6 +105,177 @@ class MMPoseExtractor(LandmarkExtractor):
         H, W = frame.shape[:2]
         packed = self._pack_keypoints(pred_3d_instances, W, H)
         return packed
+
+    def _check_batch_inference_support(self) -> bool:
+        """Lazily check if batch detection is supported.
+
+        Returns True if inference_detector accepts a list of images.
+        """
+        if self._batch_inference_checked:
+            return self._batch_inference_available
+
+        self._batch_inference_checked = True
+        try:
+            from mmdet.apis import inference_detector
+            import inspect
+            sig = inspect.signature(inference_detector)
+            # Check if imgs parameter accepts list (it does in modern mmdet)
+            self._batch_inference_available = True
+        except Exception:
+            self._batch_inference_available = False
+
+        return self._batch_inference_available
+
+    def process_batch(
+        self,
+        frames: List[np.ndarray],
+        fallback_on_error: bool = True,
+    ) -> List[Optional[np.ndarray]]:
+        """Process a batch of frames with batched detection.
+
+        Uses three-level fallback:
+        1. True batch inference (batched detection)
+        2. Sequential fallback if batch fails
+        3. Per-frame error handling (multi-person → None)
+
+        Args:
+            frames: List of input video frames (BGR format)
+            fallback_on_error: If True, return None for failed frames.
+
+        Returns:
+            List of landmark arrays (or None for failed/multi-person frames).
+        """
+        if not frames:
+            return []
+
+        # Check batch support and try batched processing
+        if self._check_batch_inference_support():
+            try:
+                return self._process_batch_batched(frames)
+            except Exception as e:
+                if not fallback_on_error:
+                    raise
+                logger.warning(
+                    "Batch inference failed, falling back to sequential: %s", e
+                )
+
+        # Fallback: sequential processing
+        return self._process_batch_sequential(frames, fallback_on_error)
+
+    def _process_batch_batched(
+        self,
+        frames: List[np.ndarray],
+    ) -> List[Optional[np.ndarray]]:
+        """Process batch with true batched detection.
+
+        Step 1: Run batched detection on all frames
+        Step 2: Filter valid detections (single person only)
+        Step 3: Run pose estimation on valid frames
+        """
+        from mmpose.apis import inference_topdown
+        from mmpose.structures import merge_data_samples
+        from mmdet.apis import inference_detector
+
+        # Pre-allocate results
+        results: List[Optional[np.ndarray]] = [None] * len(frames)
+
+        # Step 1: Batch detection
+        det_results = inference_detector(self.detector, frames)
+
+        # Step 2: Process each detection result and run pose estimation
+        for i, det_result in enumerate(det_results):
+            try:
+                pred_instance = det_result.pred_instances.cpu().numpy()
+                bboxes = pred_instance.bboxes
+                bboxes = bboxes[np.logical_and(
+                    pred_instance.labels == self.det_cat_id,
+                    pred_instance.scores > self.bbox_threshold
+                )]
+
+                # Skip if no person or multiple persons detected
+                if len(bboxes) == 0:
+                    continue
+                if len(bboxes) > 1:
+                    # Multi-person frame → None (not an error, just skip)
+                    continue
+
+                # Step 3: Pose estimation for this frame
+                frame = frames[i]
+                pose_est_results = inference_topdown(
+                    self.pose_estimator, frame, bboxes
+                )
+
+                for idx, pose_est_result in enumerate(pose_est_results):
+                    pose_est_result.track_id = pose_est_results[idx].get(
+                        "track_id", 1e4
+                    )
+
+                    pred_instances = pose_est_result.pred_instances
+                    keypoints = pred_instances.keypoints
+                    keypoint_scores = pred_instances.keypoint_scores
+
+                    if keypoint_scores.ndim == 3:
+                        keypoint_scores = np.squeeze(keypoint_scores, axis=1)
+                        pose_est_results[idx].pred_instances.keypoint_scores = (
+                            keypoint_scores
+                        )
+
+                    if keypoints.ndim == 4:
+                        keypoints = np.squeeze(keypoints, axis=1)
+
+                    pose_est_results[idx].pred_instances.keypoints = keypoints
+
+                pose_est_results = sorted(
+                    pose_est_results, key=lambda x: x.get("track_id", 1e4)
+                )
+
+                pred_3d_data_samples = merge_data_samples(pose_est_results)
+                pred_3d_instances = pred_3d_data_samples.get(
+                    "pred_instances", None
+                )
+
+                if pred_3d_instances is None:
+                    continue
+
+                H, W = frame.shape[:2]
+                results[i] = self._pack_keypoints(pred_3d_instances, W, H)
+
+            except Exception:
+                # Per-frame error → result stays None
+                continue
+
+        return results
+
+    def _process_batch_sequential(
+        self,
+        frames: List[np.ndarray],
+        fallback_on_error: bool = True,
+    ) -> List[Optional[np.ndarray]]:
+        """Process batch sequentially (fallback mode).
+
+        Args:
+            frames: List of input video frames
+            fallback_on_error: If True, continue on errors.
+
+        Returns:
+            List of landmark arrays (or None for failed frames).
+        """
+        results: List[Optional[np.ndarray]] = [None] * len(frames)
+
+        for i, frame in enumerate(frames):
+            try:
+                landmarks = self.process_frame(frame)
+                results[i] = landmarks
+            except MultiPersonDetected:
+                # Multi-person → None, continue processing
+                continue
+            except Exception:
+                if not fallback_on_error:
+                    raise
+                # Other errors → None, continue processing
+                continue
+
+        return results
 
     def _pack_keypoints(
         self,

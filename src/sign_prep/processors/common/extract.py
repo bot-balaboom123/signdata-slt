@@ -6,7 +6,7 @@ import os
 import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Generator, List, Optional, Set, Tuple
 
 import cv2
 import numpy as np
@@ -118,6 +118,33 @@ _pose_estimator = None
 _worker_config_dict = None
 
 
+def _iter_batches_with_sampling(
+    cap: cv2.VideoCapture,
+    start_frame: int,
+    end_frame: int,
+    sampler: FPSSampler,
+    batch_size: int,
+) -> Generator[List[np.ndarray], None, None]:
+    """Yield batches of sampled frames from video segment.
+
+    Memory-efficient: only holds batch_size frames at a time.
+    """
+    batch = []
+    current = start_frame
+    while current <= end_frame:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        if sampler.take():
+            batch.append(frame)
+            if len(batch) >= batch_size:
+                yield batch
+                batch = []
+        current += 1
+    if batch:  # Yield remaining frames
+        yield batch
+
+
 def _init_mmpose_worker(config_dict: dict):
     """Initialize MMPose models once per worker process."""
     global _detector, _pose_estimator, _worker_config_dict
@@ -144,7 +171,7 @@ def _init_mmpose_worker(config_dict: dict):
 
 
 def _process_segment_mediapipe(args):
-    """Process a single video segment with MediaPipe."""
+    """Process a single video segment with MediaPipe using batch processing."""
     video_path, start_time, end_time, output_file, config_dict = args
     import logging
     logger = logging.getLogger("sign_prep.extract")
@@ -170,21 +197,22 @@ def _process_segment_mediapipe(args):
 
         ext_config = ExtractorConfig(**config_dict["extractor"])
         extractor = MediaPipeExtractor(ext_config)
+        batch_size = ext_config.batch_size
 
-        num_landmarks = 33 + (478 if ext_config.refine_face_landmarks else 468) + 21 + 21
+        num_landmarks = extractor.num_landmarks
 
+        # Process frames in rolling batches (bounded memory)
         sequences = []
-        current = start_frame
-        while current <= end_frame:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            if sampler.take():
-                landmarks = extractor.process_frame(frame)
+        for batch_frames in _iter_batches_with_sampling(
+            cap, start_frame, end_frame, sampler, batch_size
+        ):
+            batch_results = extractor.process_batch(
+                batch_frames, fallback_on_error=True
+            )
+            for landmarks in batch_results:
                 if landmarks is None:
                     landmarks = np.zeros((num_landmarks, 4), dtype=np.float32)
                 sequences.append(landmarks)
-            current += 1
 
         if sequences:
             arr = np.array(sequences)
@@ -203,7 +231,7 @@ def _process_segment_mediapipe(args):
 
 
 def _process_segment_mmpose(args):
-    """Process a single video segment with MMPose."""
+    """Process a single video segment with MMPose using batch processing."""
     video_path, start_time, end_time, output_file, config_dict = args
     import logging
     logger = logging.getLogger("sign_prep.extract")
@@ -211,7 +239,7 @@ def _process_segment_mmpose(args):
     global _detector, _pose_estimator
 
     from ...config.schema import ExtractorConfig
-    from ...extractors.mmpose import MMPoseExtractor, MultiPersonDetected
+    from ...extractors.mmpose import MMPoseExtractor
 
     cap = None
     try:
@@ -234,29 +262,31 @@ def _process_segment_mmpose(args):
             detector=_detector,
             pose_estimator=_pose_estimator,
         )
+        batch_size = ext_config.batch_size
 
-        num_landmarks = 133
+        num_landmarks = extractor.num_landmarks
 
+        # Process frames in rolling batches (bounded memory)
+        # Multi-person frames return None and are handled gracefully
         sequences = []
-        current = start_frame
-        multi_person = False
 
-        while current <= end_frame:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            if sampler.take():
-                try:
-                    landmarks = extractor.process_frame(frame)
-                except MultiPersonDetected:
-                    multi_person = True
-                    break
+        for batch_frames in _iter_batches_with_sampling(
+            cap, start_frame, end_frame, sampler, batch_size
+        ):
+            batch_results = extractor.process_batch(
+                batch_frames, fallback_on_error=True
+            )
+
+            for landmarks in batch_results:
                 if landmarks is None:
+                    # Could be no detection or multi-person
+                    # We continue processing; use zeros for those frames
                     landmarks = np.zeros((num_landmarks, 4), dtype=np.float32)
                 sequences.append(landmarks)
-            current += 1
 
-        if not multi_person and sequences:
+        # Only save if we have valid sequences
+        # Note: We no longer abort on multi-person; we use zeros for those frames
+        if sequences:
             arr = np.array(sequences)
             if arr.size > 0 and np.any(arr):
                 os.makedirs(os.path.dirname(output_file), exist_ok=True)

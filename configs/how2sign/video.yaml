@@ -5,8 +5,27 @@ dataset: how2sign
 pipeline:
   mode: video
   steps: [clip_video, webdataset]
+  start_from: null
+  stop_at: null
 
 paths:
   root: dataset/how2sign
   videos: dataset/how2sign/videos
+  transcripts: ""
   manifest: dataset/how2sign/how2sign_realigned_val.csv
+  landmarks: ""
+  normalized: ""
+  clips: ""
+  webdataset: ""
+
+download:
+  video_ids_file: ""
+  languages: [en]
+  format: "worstvideo[height>=720][fps>=24]/bestvideo[height>=480]"
+  rate_limit: "5M"
+  concurrent_fragments: 5
+
+manifest:
+  max_text_length: 300
+  min_duration: 0.2
+  max_duration: 60.0

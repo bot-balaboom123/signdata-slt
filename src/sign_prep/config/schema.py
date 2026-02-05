@@ -21,6 +21,7 @@ class ManifestConfig(BaseModel):
 class ExtractorConfig(BaseModel):
     name: str = "mediapipe"
     max_workers: int = 4
+    batch_size: int = 16  # Number of frames per batch for inference
     # MediaPipe-specific
     model_complexity: int = 1
     min_detection_confidence: float = 0.5

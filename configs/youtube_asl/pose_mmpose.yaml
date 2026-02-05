@@ -5,17 +5,23 @@ dataset: youtube_asl
 pipeline:
   mode: pose
   steps: [download, manifest, extract, normalize, webdataset]
+  start_from: null
+  stop_at: null
 
 paths:
   root: dataset/youtube_asl
   videos: dataset/youtube_asl/videos
   transcripts: dataset/youtube_asl/transcripts
   manifest: dataset/youtube_asl/manifest.csv
+  landmarks: ""
+  normalized: ""
+  clips: ""
+  webdataset: ""
 
 download:
   video_ids_file: assets/youtube-asl_youtube_asl_video_ids.txt
   languages: [en, ase, en-US, en-CA, en-GB, en-AU]
-  format: "worstvideo[height>=720][fps>=24]/bestvideo[height>=480][height<720][fps>=24][fps<=60]/bestvideo[height>=480][height<=1080][fps>=14]"
+  format: "worstvideo[height>=720][fps>=23]/bestvideo[height>=480][height<720][fps>=23][fps<=61]/bestvideo[height>=480][height<=1080][fps>=14]"
   rate_limit: "5M"
   concurrent_fragments: 5
 
@@ -25,6 +31,13 @@ manifest:
   max_duration: 60.0
 
 normalize:
+  mode: xy_isotropic_z_minmax
+  remove_z: false
+  reduction: true
+  mask_frame_level: true
+  mask_landmark_level: false
+  visibility_threshold: 0.3
+  unvisible_value: -999.0
   keypoint_indices:
     - 5
     - 6

@@ -5,13 +5,26 @@ dataset: how2sign
 pipeline:
   mode: pose
   steps: [extract, normalize, webdataset]
+  start_from: null
+  stop_at: null
 
 paths:
   root: dataset/how2sign
   videos: dataset/how2sign/videos
   manifest: dataset/how2sign/how2sign_realigned_val.csv
+  landmarks: ""
+  normalized: ""
+  clips: ""
+  webdataset: ""
 
 normalize:
+  mode: xy_isotropic_z_minmax
+  remove_z: false
+  reduction: true
+  mask_frame_level: true
+  mask_landmark_level: false
+  visibility_threshold: 0.3
+  unvisible_value: -999.0
   keypoint_indices:
     - 5
     - 6
