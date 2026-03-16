@@ -6,11 +6,13 @@ clip_video:
 
 person_localize:
   model: "yolov8n.pt"
+  backend: "ultralytics"
   confidence_threshold: 0.5
   sample_strategy: "skip_frame"   # "skip_frame" (default) or "uniform"
-  frame_skip: 2                   # skip_frame: take 1 frame every (frame_skip+1) frames
-  sample_frames: 5                # uniform: exact count; skip_frame: max frame count
-  device: "cuda:0"
+  uniform_frames: 5               # uniform mode: exact frame count to sample
+  max_frames: 5                   # skip_frame mode: maximum frames to sample
+  # frame_skip is shared with processing.frame_skip — not duplicated here
+  device: "cpu"                   # override to "cuda:0" or "mps" for GPU
   min_bbox_area: 0.05
 
 crop_video:

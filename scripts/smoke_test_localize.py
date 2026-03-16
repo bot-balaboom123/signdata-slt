@@ -17,7 +17,6 @@ import argparse
 import os
 import sys
 import shutil
-import tempfile
 from pathlib import Path
 
 import cv2
@@ -38,36 +37,42 @@ def get_video_duration(video_path: str) -> float:
     return 0.0
 
 
-def build_manifest(video_path: str, workspace: Path) -> Path:
-    """Create a minimal manifest with 2 segments from the video."""
+def build_manifest(video_path: str, workspace: Path, num_segments: int, segment_duration: float) -> Path:
+    """Create a manifest by evenly spacing num_segments clips across the video."""
     duration = get_video_duration(video_path)
-    if duration < 2.0:
-        raise ValueError(f"Video too short ({duration:.1f}s), need at least 2s.")
+    if duration < segment_duration:
+        raise ValueError(f"Video too short ({duration:.1f}s) for segment_duration={segment_duration}s.")
 
     video_name = Path(video_path).stem
 
-    # Create 2 segments: first half and second half
-    mid = duration / 2
-    seg1_end = min(mid, 10.0)       # cap at 10s
-    seg2_start = mid
-    seg2_end = min(duration, mid + 10.0)
+    # Space segment start points evenly across the video
+    usable = duration - segment_duration
+    starts = [i * usable / max(num_segments - 1, 1) for i in range(num_segments)]
+
+    rows = {
+        "VIDEO_NAME":      [],
+        "SENTENCE_NAME":   [],
+        "START_REALIGNED": [],
+        "END_REALIGNED":   [],
+        "SENTENCE":        [],
+    }
+    for i, start in enumerate(starts):
+        end = start + segment_duration
+        rows["VIDEO_NAME"].append(video_name)
+        rows["SENTENCE_NAME"].append(f"{video_name}-{i}")
+        rows["START_REALIGNED"].append(round(start, 3))
+        rows["END_REALIGNED"].append(round(end, 3))
+        rows["SENTENCE"].append(f"segment {i}")
+        print(f"  Segment {i}: {start:.1f}s → {end:.1f}s")
 
     manifest_path = workspace / "manifest.csv"
-    df = pd.DataFrame({
-        "VIDEO_NAME":       [video_name,         video_name],
-        "SENTENCE_NAME":    [f"{video_name}-0",  f"{video_name}-1"],
-        "START_REALIGNED":  [0.0,                seg2_start],
-        "END_REALIGNED":    [seg1_end,            seg2_end],
-        "SENTENCE":         ["segment 0",         "segment 1"],
-    })
-    df.to_csv(manifest_path, sep="\t", index=False)
+    pd.DataFrame(rows).to_csv(manifest_path, sep="\t", index=False)
     print(f"  Created manifest: {manifest_path}")
-    print(f"  Segment 0: 0.0s → {seg1_end:.1f}s")
-    print(f"  Segment 1: {seg2_start:.1f}s → {seg2_end:.1f}s")
     return manifest_path
 
 
-def run_smoke_test(video_path: str, device: str, padding: float, sample_frames: int):
+def run_smoke_test(video_path: str, device: str, padding: float, max_frames: int,
+                   output_dir: str = None, num_segments: int = 2, segment_duration: float = 10.0):
     import shutil
 
     # Pre-flight: verify ffmpeg is available
@@ -95,31 +100,37 @@ def run_smoke_test(video_path: str, device: str, padding: float, sample_frames: 
     print(f"\n{'='*60}")
     print(f"  Smoke test: person_localize + clip_video + crop_video")
     print(f"  Video : {video_path}")
-    print(f"  Device: {device}  |  Padding: {padding}  |  Sample frames: {sample_frames}")
+    print(f"  Device: {device}  |  Padding: {padding}  |  Max frames: {max_frames}  |  Segments: {num_segments} × {segment_duration}s")
     print(f"{'='*60}\n")
 
     # ----------------------------------------------------------------
-    # Setup workspace
+    # Setup workspace — mirrors dataset/how2sign layout
     # ----------------------------------------------------------------
-    workspace = Path(tempfile.mkdtemp(prefix="sign_prep_smoke_"))
+    if output_dir:
+        workspace = Path(output_dir)
+    else:
+        workspace = PROJECT_ROOT / "dataset" / "smoke_test"
+
     videos_dir  = workspace / "videos"
     clips_dir   = workspace / "clips"
     cropped_dir = workspace / "cropped_clips"
-    videos_dir.mkdir()
-    clips_dir.mkdir()
-    cropped_dir.mkdir()
+    videos_dir.mkdir(parents=True, exist_ok=True)
+    clips_dir.mkdir(parents=True, exist_ok=True)
+    cropped_dir.mkdir(parents=True, exist_ok=True)
 
-    # Symlink (or copy) the video into the videos dir so the processor finds it
+    # Symlink (or copy) the video into the videos dir so the processor finds it.
+    # Skip if the video is already inside videos_dir (e.g. re-running with the same path).
     video_name = Path(video_path).stem
     dest_video = videos_dir / f"{video_name}.mp4"
-    try:
-        os.symlink(video_path, dest_video)
-    except (OSError, NotImplementedError):
-        # Windows may not support symlinks without admin rights → copy instead
-        shutil.copy2(video_path, dest_video)
+    if Path(video_path).resolve() != dest_video.resolve():
+        try:
+            os.symlink(video_path, dest_video)
+        except (OSError, NotImplementedError):
+            # Windows may not support symlinks without admin rights → copy instead
+            shutil.copy2(video_path, dest_video)
 
-    print(f"[1/4] Building manifest...")
-    manifest_path = build_manifest(str(dest_video), workspace)
+    print(f"[1/4] Building manifest ({num_segments} segments × {segment_duration}s)...")
+    manifest_path = build_manifest(str(dest_video), workspace, num_segments, segment_duration)
 
     # ----------------------------------------------------------------
     # Build config
@@ -137,7 +148,8 @@ def run_smoke_test(video_path: str, device: str, padding: float, sample_frames: 
         person_localize={
             "model":                "yolov8n.pt",
             "confidence_threshold": 0.5,
-            "sample_frames":        sample_frames,
+            "max_frames":           max_frames,
+            "uniform_frames":       max_frames,
             "device":               device,
             "min_bbox_area":        0.02,   # relaxed for smoke test
         },
@@ -251,8 +263,20 @@ def main():
         help="Crop padding ratio (default: 0.25)"
     )
     parser.add_argument(
-        "--sample-frames", type=int, default=5,
-        help="Number of frames to sample for detection (default: 5)"
+        "--max-frames", type=int, default=5,
+        help="Max frames to sample for detection (default: 5)"
+    )
+    parser.add_argument(
+        "--output-dir", default=None,
+        help="Output directory (default: dataset/smoke_test/ inside the project root)"
+    )
+    parser.add_argument(
+        "--num-segments", type=int, default=2,
+        help="Number of segments to sample from the video (default: 2)"
+    )
+    parser.add_argument(
+        "--segment-duration", type=float, default=10.0,
+        help="Duration of each segment in seconds (default: 10.0)"
     )
     args = parser.parse_args()
 
@@ -260,7 +284,10 @@ def main():
         video_path=args.video,
         device=args.device,
         padding=args.padding,
-        sample_frames=args.sample_frames,
+        max_frames=args.max_frames,
+        output_dir=args.output_dir,
+        num_segments=args.num_segments,
+        segment_duration=args.segment_duration,
     )
 
 

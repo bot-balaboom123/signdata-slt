@@ -85,10 +85,12 @@ class _ShardWriter:
         """
         key = sample["__key__"]
 
-        # Roll over shard if needed (check before writing)
+        # Roll over shard if needed (check before writing).
+        # Use elif to prevent double _next_shard() when both limits are hit at once,
+        # which would create an empty intermediate shard file.
         if self._count >= self.max_count:
             self._next_shard()
-        if self.max_size and self._size >= self.max_size:
+        elif self.max_size and self._size >= self.max_size:
             self._next_shard()
 
         for ext, value in sample.items():

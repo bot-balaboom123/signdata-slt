@@ -132,18 +132,20 @@ def _sample_frames(
     end_sec: float,
     strategy: str,
     frame_skip: int,
-    sample_frames: int,
+    uniform_frames: int,
+    max_frames: int,
 ) -> List[Tuple[np.ndarray, int, int]]:
     """Dispatch to the appropriate sampling strategy.
 
     Args:
-        video_path:    Path to the video file.
-        start_sec:     Segment start time in seconds.
-        end_sec:       Segment end time in seconds.
-        strategy:      "skip_frame" or "uniform".
-        frame_skip:    Used by skip_frame: take 1 frame every (frame_skip+1) frames.
-        sample_frames: Used by uniform as exact count;
-                       used by skip_frame as maximum frame count.
+        video_path:     Path to the video file.
+        start_sec:      Segment start time in seconds.
+        end_sec:        Segment end time in seconds.
+        strategy:       "skip_frame" or "uniform".
+        frame_skip:     Used by skip_frame: take 1 frame every (frame_skip+1) frames.
+                        Reads from processing.frame_skip, not person_localize config.
+        uniform_frames: Used by uniform mode as the exact frame count.
+        max_frames:     Used by skip_frame mode as the maximum frame count.
 
     Returns:
         List of (frame_bgr, width, height) tuples.
@@ -152,12 +154,12 @@ def _sample_frames(
         return _sample_frames_skip(
             video_path, start_sec, end_sec,
             frame_skip=frame_skip,
-            max_frames=sample_frames,
+            max_frames=max_frames,
         )
     else:  # uniform
         return _sample_frames_uniform(
             video_path, start_sec, end_sec,
-            n=sample_frames,
+            n=uniform_frames,
         )
 
 
@@ -289,17 +291,19 @@ class PersonLocalizeProcessor(BaseProcessor):
         )
 
         # ----------------------------------------------------------------
-        # Load YOLOv8 model (once)
+        # Load detector model — dispatch on backend
         # ----------------------------------------------------------------
-        if YOLO is None:
-            raise ImportError(
-                "ultralytics is required for person_localize. "
-                "Install with: pip install ultralytics"
-            )
-
-        self.logger.info("Loading YOLOv8 model: %s on %s", loc_cfg.model, loc_cfg.device)
-        model = YOLO(loc_cfg.model)
-        model.to(loc_cfg.device)
+        if loc_cfg.backend == "ultralytics":
+            if YOLO is None:
+                raise ImportError(
+                    "ultralytics is required for backend='ultralytics'. "
+                    "Install with: pip install ultralytics"
+                )
+            self.logger.info("Loading YOLOv8 model: %s on %s", loc_cfg.model, loc_cfg.device)
+            model = YOLO(loc_cfg.model)
+            model.to(loc_cfg.device)
+        else:
+            raise ValueError(f"Unknown detector backend: {loc_cfg.backend!r}")
 
         # ----------------------------------------------------------------
         # Process each segment
@@ -308,6 +312,7 @@ class PersonLocalizeProcessor(BaseProcessor):
 
         # We'll accumulate results as a dict keyed by DataFrame index
         results_map = {}
+        _CHECKPOINT_EVERY = 50
 
         for idx, row in tqdm(pending.iterrows(), total=len(pending), desc="Localizing persons"):
             video_name = row["VIDEO_NAME"]
@@ -317,79 +322,85 @@ class PersonLocalizeProcessor(BaseProcessor):
                 self.logger.warning("Video not found, using fallback: %s", video_path)
                 results_map[idx] = self._fallback_row(video_path)
                 fallback += 1
-                continue
+            else:
+                try:
+                    start_sec = float(row[start_col])
+                    end_sec = float(row[end_col])
 
-            try:
-                start_sec = float(row[start_col])
-                end_sec = float(row[end_col])
+                    # Sample frames — frame_skip comes from processing config (Issue 1a)
+                    frames_meta = _sample_frames(
+                        video_path, start_sec, end_sec,
+                        strategy=loc_cfg.sample_strategy,
+                        frame_skip=cfg.processing.frame_skip,
+                        uniform_frames=loc_cfg.uniform_frames,
+                        max_frames=loc_cfg.max_frames,
+                    )
 
-                # Sample frames from the segment
-                frames_meta = _sample_frames(
-                    video_path, start_sec, end_sec,
-                    strategy=loc_cfg.sample_strategy,
-                    frame_skip=loc_cfg.frame_skip,
-                    sample_frames=loc_cfg.sample_frames,
-                )
+                    if not frames_meta:
+                        self.logger.warning(
+                            "Could not sample frames for %s, using fallback.",
+                            row["SENTENCE_NAME"],
+                        )
+                        results_map[idx] = self._fallback_row(video_path)
+                        fallback += 1
+                    else:
+                        # Batch detection across all sampled frames
+                        per_frame_bboxes = _detect_persons_batch(
+                            model,
+                            frames_meta,
+                            loc_cfg.confidence_threshold,
+                            loc_cfg.min_bbox_area,
+                        )
 
-                if not frames_meta:
-                    self.logger.warning(
-                        "Could not sample frames for %s, using fallback.",
-                        row["SENTENCE_NAME"],
+                        # Collect all valid bboxes across frames
+                        all_valid: List[Tuple[float, float, float, float]] = []
+                        for frame_bboxes in per_frame_bboxes:
+                            # Pick the largest-area bbox per frame (most likely the signer)
+                            if frame_bboxes:
+                                best = max(
+                                    frame_bboxes,
+                                    key=lambda b: (b[2] - b[0]) * (b[3] - b[1]),
+                                )
+                                all_valid.append(best)
+
+                        if all_valid:
+                            union = _union_bboxes(all_valid)
+                            results_map[idx] = {
+                                "BBOX_X1": union[0],
+                                "BBOX_Y1": union[1],
+                                "BBOX_X2": union[2],
+                                "BBOX_Y2": union[3],
+                                "PERSON_DETECTED": True,
+                            }
+                            detected += 1
+                        else:
+                            # No person found in any sampled frame → fallback to full frame
+                            _, w, h = frames_meta[0]
+                            results_map[idx] = {
+                                "BBOX_X1": 0.0,
+                                "BBOX_Y1": 0.0,
+                                "BBOX_X2": float(w),
+                                "BBOX_Y2": float(h),
+                                "PERSON_DETECTED": False,
+                            }
+                            fallback += 1
+
+                except Exception as e:
+                    self.logger.error(
+                        "Error processing %s: %s", row.get("SENTENCE_NAME", "?"), e
                     )
                     results_map[idx] = self._fallback_row(video_path)
-                    fallback += 1
-                    continue
+                    errors += 1
 
-                # Batch detection across all sampled frames
-                per_frame_bboxes = _detect_persons_batch(
-                    model,
-                    frames_meta,
-                    loc_cfg.confidence_threshold,
-                    loc_cfg.min_bbox_area,
-                )
-
-                # Collect all valid bboxes across frames
-                all_valid: List[Tuple[float, float, float, float]] = []
-                for frame_bboxes in per_frame_bboxes:
-                    # Pick the largest-area bbox per frame (most likely the signer)
-                    if frame_bboxes:
-                        best = max(
-                            frame_bboxes,
-                            key=lambda b: (b[2] - b[0]) * (b[3] - b[1]),
-                        )
-                        all_valid.append(best)
-
-                if all_valid:
-                    union = _union_bboxes(all_valid)
-                    results_map[idx] = {
-                        "BBOX_X1": union[0],
-                        "BBOX_Y1": union[1],
-                        "BBOX_X2": union[2],
-                        "BBOX_Y2": union[3],
-                        "PERSON_DETECTED": True,
-                    }
-                    detected += 1
-                else:
-                    # No person found in any sampled frame → fallback to full frame
-                    _, w, h = frames_meta[0]
-                    results_map[idx] = {
-                        "BBOX_X1": 0.0,
-                        "BBOX_Y1": 0.0,
-                        "BBOX_X2": float(w),
-                        "BBOX_Y2": float(h),
-                        "PERSON_DETECTED": False,
-                    }
-                    fallback += 1
-
-            except Exception as e:
-                self.logger.error(
-                    "Error processing %s: %s", row.get("SENTENCE_NAME", "?"), e
-                )
-                results_map[idx] = self._fallback_row(video_path)
-                errors += 1
+            # Periodic checkpoint — flush results so a crash doesn't lose all progress
+            if len(results_map) % _CHECKPOINT_EVERY == 0:
+                for i, vals in results_map.items():
+                    for col, val in vals.items():
+                        data.at[i, col] = val
+                data.to_csv(manifest_path, sep="\t", index=False)
 
         # ----------------------------------------------------------------
-        # Write results back to manifest
+        # Final write — flush any remaining results not caught by checkpoint
         # ----------------------------------------------------------------
         for idx, vals in results_map.items():
             for col, val in vals.items():

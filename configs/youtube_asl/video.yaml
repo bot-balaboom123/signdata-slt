@@ -31,14 +31,10 @@ manifest:
   min_duration: 0.2
   max_duration: 60.0
 
-# Override defaults if needed
+# Only uncomment fields you actually want to change from the defaults, e.g.:
 # person_localize:
-#   model: "yolov8n.pt"
-#   confidence_threshold: 0.5
-#   sample_frames: 5
-#   device: "cuda:0"
-#   min_bbox_area: 0.05
+#   device: "cuda:0"     # use GPU instead of CPU
+#   min_bbox_area: 0.02  # relax if signer occupies a small portion of the frame
 
 # crop_video:
-#   padding: 0.25
-#   codec: "libx264"
+#   padding: 0.30        # more padding if ASL signers sign wide

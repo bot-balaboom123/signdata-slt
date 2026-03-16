@@ -71,12 +71,13 @@ class ClipVideoConfig(BaseModel):
 
 class PersonLocalizeConfig(BaseModel):
     model: str = "yolov8n.pt"
+    backend: Literal["ultralytics"] = "ultralytics"
     confidence_threshold: float = 0.5
     sample_strategy: Literal["skip_frame", "uniform"] = "skip_frame"
-    frame_skip: int = 2         # skip_frame mode: take one frame every N frames
-    sample_frames: int = 5      # uniform mode: how many frames to sample;
-                                # skip_frame mode: maximum frames to sample
-    device: str = "cuda:0"
+    uniform_frames: int = 5     # uniform mode: exact number of frames to sample
+    max_frames: int = 5         # skip_frame mode: maximum frames to sample
+    # frame_skip is read from processing.frame_skip — not duplicated here
+    device: str = "cpu"
     min_bbox_area: float = 0.05
 
 

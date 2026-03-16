@@ -108,9 +108,11 @@ class TestSchemaDefaults:
     def test_person_localize_defaults(self):
         cfg = PersonLocalizeConfig()
         assert cfg.model == "yolov8n.pt"
+        assert cfg.backend == "ultralytics"
         assert cfg.confidence_threshold == 0.5
-        assert cfg.sample_frames == 5
-        assert cfg.device == "cuda:0"
+        assert cfg.uniform_frames == 5
+        assert cfg.max_frames == 5
+        assert cfg.device == "cpu"
         assert cfg.min_bbox_area == 0.05
 
     def test_crop_video_defaults(self):
@@ -389,9 +391,9 @@ class TestPersonLocalizeManifest:
         # Mock YOLO and _sample_frames so no GPU / file I/O is needed
         fake_bbox = (10.0, 20.0, 200.0, 400.0)
 
-        def fake_sample_frames(video_path, start, end, strategy, frame_skip, sample_frames):
+        def fake_sample_frames(video_path, start, end, strategy, frame_skip, uniform_frames, max_frames):
             fake_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-            return [(fake_frame, 640, 480)] * sample_frames
+            return [(fake_frame, 640, 480)] * uniform_frames
 
         def fake_detect_batch(model, frames_meta, conf_thresh, min_area):
             # Each frame returns one valid bbox
@@ -541,7 +543,8 @@ class TestSampleStrategy:
             video_path, 0.0, 2.0,
             strategy="skip_frame",
             frame_skip=2,
-            sample_frames=5,
+            uniform_frames=5,
+            max_frames=5,
         )
         assert len(frames) <= 5
 
@@ -551,14 +554,16 @@ class TestSampleStrategy:
             video_path, 0.0, 2.0,
             strategy="uniform",
             frame_skip=2,
-            sample_frames=5,
+            uniform_frames=5,
+            max_frames=5,
         )
         assert len(frames) == 5
 
     def test_schema_default_is_skip_frame(self):
         cfg = PersonLocalizeConfig()
         assert cfg.sample_strategy == "skip_frame"
-        assert cfg.frame_skip == 2
+        # frame_skip lives on ProcessingConfig, not PersonLocalizeConfig
+        assert not hasattr(cfg, "frame_skip")
 
     def test_schema_accepts_uniform(self):
         cfg = PersonLocalizeConfig(sample_strategy="uniform")
