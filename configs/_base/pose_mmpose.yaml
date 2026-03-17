@@ -2,7 +2,7 @@ extractor:
   name: mmpose
   max_workers: 4
   bbox_threshold: 0.5
-  kpt_threshold: 0.3
+  keypoint_threshold: 0.3
   add_visible: true
   device: "cuda:0"
   pose_model_config: src/sign_prep/models/configs/rtmw3d-l_8xb64_cocktail14-384x288.py
@@ -13,11 +13,11 @@ extractor:
 normalize:
   mode: xy_isotropic_z_minmax
   remove_z: false
-  reduction: true
-  mask_frame_level: true
-  mask_landmark_level: false
+  select_keypoints: true
+  mask_empty_frames: true
+  mask_low_confidence: false
   visibility_threshold: 0.3
-  unvisible_value: -999.0
+  missing_value: -999.0
 
 processing:
   max_workers: 4

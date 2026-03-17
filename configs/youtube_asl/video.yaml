@@ -4,7 +4,7 @@ dataset: youtube_asl
 
 pipeline:
   mode: video
-  steps: [download, manifest, person_localize, clip_video, crop_video, webdataset]
+  steps: [download, manifest, detect_person, clip_video, crop_video, webdataset]
   start_from: null
   stop_at: null
 
@@ -32,7 +32,7 @@ manifest:
   max_duration: 60.0
 
 # Only uncomment fields you actually want to change from the defaults, e.g.:
-# person_localize:
+# detect_person:
 #   device: "cuda:0"     # use GPU instead of CPU
 #   min_bbox_area: 0.02  # relax if signer occupies a small portion of the frame
 

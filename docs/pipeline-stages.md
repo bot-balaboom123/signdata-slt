@@ -67,10 +67,10 @@ Applies keypoint reduction, visibility masking, coordinate normalization, and fl
 
 - **Input:** `{paths.landmarks}/*.npy` with shape `(T, K, 4)`
 - **Output:** `{paths.normalized}/*.npy` with shape `(T, K'*C)` flattened, where `K'` is the reduced keypoint count and `C` is 3 (visibility is always stripped); `C` = 2 when `remove_z=true`
-- **Key config:** `normalize.mode`, `normalize.reduction`, `normalize.keypoint_indices`, `normalize.remove_z`, `normalize.visibility_threshold`, `normalize.unvisible_value`
+- **Key config:** `normalize.mode`, `normalize.select_keypoints`, `normalize.keypoint_indices`, `normalize.remove_z`, `normalize.visibility_threshold`, `normalize.missing_value`
 - **Processing pipeline:**
   1. **Reduction** -- select a subset of keypoints (default: 85 for MediaPipe refined/MMPose, 83 for MediaPipe unrefined). Custom indices can be specified via `keypoint_indices`.
-  2. **Visibility masking** -- frame-level: replace all-zero frames with `unvisible_value`; landmark-level: replace landmarks below `visibility_threshold`.
+  2. **Visibility masking** -- frame-level: replace all-zero frames with `missing_value`; landmark-level: replace landmarks below `visibility_threshold`.
   3. **Normalization** -- `xy_isotropic_z_minmax` normalizes XY isotropically and Z via min-max; `isotropic_3d` normalizes XYZ with a single scale factor.
   4. **Z removal** -- optionally drop the z-coordinate.
   5. **Flatten** -- reshape from `(T, K', C)` to `(T, K'*C)`.

@@ -4,7 +4,7 @@ dataset: how2sign
 
 pipeline:
   mode: video
-  steps: [person_localize, clip_video, crop_video, webdataset]
+  steps: [detect_person, clip_video, crop_video, webdataset]
   start_from: null
   stop_at: null
 
@@ -31,9 +31,9 @@ manifest:
   min_duration: 0.2
   max_duration: 60.0
 
-# person_localize and crop_video use defaults from _base/video.yaml.
+# detect_person and crop_video use defaults from _base/video.yaml.
 # Only uncomment fields you actually want to change from the defaults, e.g.:
-# person_localize:
+# detect_person:
 #   device: "cuda:0"          # use GPU instead of CPU
 #   confidence_threshold: 0.4 # lower threshold if signer detections are missed
 

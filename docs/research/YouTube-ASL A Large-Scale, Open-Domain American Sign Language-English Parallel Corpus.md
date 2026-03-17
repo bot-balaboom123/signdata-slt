@@ -104,8 +104,8 @@ That config is aligned with the paper where the current config system exposes a 
 - It keeps the 85-keypoint landmark subset
 - It uses `target_fps: null` with `frame_skip: 2` to match "discard every second frame"
 - It uses `accept_fps_range: [15.0, 60.0]`
-- It keeps `unvisible_value: -999.0` for missing landmarks
-- It sets `mask_landmark_level: true` and `visibility_threshold: 0.0` so missing all-zero landmarks are masked while MediaPipe visibility scores are otherwise ignored
+- It keeps `missing_value: -999.0` for missing landmarks
+- It sets `mask_low_confidence: true` and `visibility_threshold: 0.0` so missing all-zero landmarks are masked while MediaPipe visibility scores are otherwise ignored
 
 ## 5. Current Gaps Between Paper and Repo
 

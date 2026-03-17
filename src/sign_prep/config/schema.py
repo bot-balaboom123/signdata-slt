@@ -33,7 +33,7 @@ class ExtractorConfig(BaseModel):
     det_model_config: str = ""
     det_model_checkpoint: str = ""
     bbox_threshold: float = 0.5
-    kpt_threshold: float = 0.3
+    keypoint_threshold: float = 0.3
     add_visible: bool = True
     device: str = "cuda:0"
 
@@ -41,12 +41,12 @@ class ExtractorConfig(BaseModel):
 class NormalizeConfig(BaseModel):
     mode: Literal["isotropic_3d", "xy_isotropic_z_minmax"] = "xy_isotropic_z_minmax"
     remove_z: bool = False
-    reduction: bool = True
+    select_keypoints: bool = True
     keypoint_indices: Optional[List[int]] = None
-    mask_frame_level: bool = True
-    mask_landmark_level: bool = False
+    mask_empty_frames: bool = True
+    mask_low_confidence: bool = False
     visibility_threshold: float = 0.3
-    unvisible_value: float = -999.0
+    missing_value: float = -999.0
 
 
 class ProcessingConfig(BaseModel):
@@ -69,7 +69,7 @@ class ClipVideoConfig(BaseModel):
     resize: Optional[List[int]] = None
 
 
-class PersonLocalizeConfig(BaseModel):
+class DetectPersonConfig(BaseModel):
     model: str = "yolov8n.pt"
     backend: Literal["ultralytics"] = "ultralytics"
     confidence_threshold: float = 0.5
@@ -116,5 +116,5 @@ class Config(BaseModel):
     processing: ProcessingConfig = ProcessingConfig()
     webdataset: WebDatasetConfig = WebDatasetConfig()
     clip_video: ClipVideoConfig = ClipVideoConfig()
-    person_localize: PersonLocalizeConfig = PersonLocalizeConfig()
+    detect_person: DetectPersonConfig = DetectPersonConfig()
     crop_video: CropVideoConfig = CropVideoConfig()

@@ -1,4 +1,4 @@
-"""Person localization processor: detect and localize the signer in each video segment.
+"""Person detection processor: detect the signer in each video segment.
 
 Uses YOLOv8-nano to detect persons across sampled frames, then writes
 bounding box information back into the manifest CSV.
@@ -20,7 +20,7 @@ from tqdm import tqdm
 from ..base import BaseProcessor
 from ...registry import register_processor
 
-# Module-level import so tests can patch sign_prep...person_localize.YOLO
+# Module-level import so tests can patch sign_prep...detect_person.YOLO
 # ultralytics is an optional dependency; import error surfaces only at runtime.
 try:
     from ultralytics import YOLO
@@ -44,16 +44,16 @@ def _sample_frames_uniform(
 
     Returns list of (frame_bgr, video_width, video_height).
     """
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
+    video_capture = cv2.VideoCapture(video_path)
+    if not video_capture.isOpened():
         return []
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = video_capture.get(cv2.CAP_PROP_FPS)
+    w = int(video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     if fps <= 0:
-        cap.release()
+        video_capture.release()
         return []
 
     start_frame = int(start_sec * fps)
@@ -69,12 +69,12 @@ def _sample_frames_uniform(
 
     frames = []
     for idx in indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-        ret, frame = cap.read()
+        video_capture.set(cv2.CAP_PROP_POS_FRAMES, idx)
+        ret, frame = video_capture.read()
         if ret and frame is not None:
             frames.append((frame, w, h))
 
-    cap.release()
+    video_capture.release()
     return frames
 
 
@@ -92,27 +92,27 @@ def _sample_frames_skip(
 
     Returns list of (frame_bgr, video_width, video_height).
     """
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
+    video_capture = cv2.VideoCapture(video_path)
+    if not video_capture.isOpened():
         return []
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = video_capture.get(cv2.CAP_PROP_FPS)
+    w = int(video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     if fps <= 0:
-        cap.release()
+        video_capture.release()
         return []
 
     start_frame = int(start_sec * fps)
     end_frame = int(end_sec * fps)
 
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    video_capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
     frames = []
     current = start_frame
     while current <= end_frame and len(frames) < max_frames:
-        ret, frame = cap.read()
+        ret, frame = video_capture.read()
         if not ret:
             break
         # Take this frame, then skip frame_skip frames
@@ -120,9 +120,9 @@ def _sample_frames_skip(
             frames.append((frame, w, h))
         # Skip forward
         current += frame_skip + 1
-        cap.set(cv2.CAP_PROP_POS_FRAMES, current)
+        video_capture.set(cv2.CAP_PROP_POS_FRAMES, current)
 
-    cap.release()
+    video_capture.release()
     return frames
 
 
@@ -143,7 +143,7 @@ def _sample_frames(
         end_sec:        Segment end time in seconds.
         strategy:       "skip_frame" or "uniform".
         frame_skip:     Used by skip_frame: take 1 frame every (frame_skip+1) frames.
-                        Reads from processing.frame_skip, not person_localize config.
+                        Reads from processing.frame_skip, not detect_person config.
         uniform_frames: Used by uniform mode as the exact frame count.
         max_frames:     Used by skip_frame mode as the maximum frame count.
 
@@ -202,15 +202,15 @@ def _detect_persons_batch(
             all_bboxes.append(valid)
             continue
 
-        cls_ids = boxes.cls.cpu().numpy()
-        confs = boxes.conf.cpu().numpy()
+        class_ids = boxes.cls.cpu().numpy()
+        confidences = boxes.conf.cpu().numpy()
         xyxy = boxes.xyxy.cpu().numpy()  # shape (N, 4)
 
-        for j in range(len(cls_ids)):
+        for j in range(len(class_ids)):
             # class 0 = person in COCO
-            if int(cls_ids[j]) != 0:
+            if int(class_ids[j]) != 0:
                 continue
-            if confs[j] < confidence_threshold:
+            if confidences[j] < confidence_threshold:
                 continue
 
             x1, y1, x2, y2 = xyxy[j]
@@ -229,9 +229,9 @@ def _detect_persons_batch(
 # Processor
 # ---------------------------------------------------------------------------
 
-@register_processor("person_localize")
-class PersonLocalizeProcessor(BaseProcessor):
-    """Detect and localize the signer across video segments.
+@register_processor("detect_person")
+class DetectPersonProcessor(BaseProcessor):
+    """Detect the signer across video segments.
 
     Reads VIDEO_NAME / SENTENCE_NAME / timestamps from the manifest,
     samples frames from the original video, runs YOLOv8-nano person
@@ -243,11 +243,11 @@ class PersonLocalizeProcessor(BaseProcessor):
         PERSON_DETECTED                       (bool)
     """
 
-    name = "person_localize"
+    name = "detect_person"
 
     def run(self, context):
         cfg = self.config
-        loc_cfg = cfg.person_localize
+        loc_cfg = cfg.detect_person
         manifest_path = cfg.paths.manifest
         video_dir = cfg.paths.videos
 
@@ -280,12 +280,12 @@ class PersonLocalizeProcessor(BaseProcessor):
         pending = data[pending_mask].copy()
 
         if pending.empty:
-            self.logger.info("All rows already localized, skipping.")
-            context.stats["person_localize"] = {"total": 0}
+            self.logger.info("All rows already detected, skipping.")
+            context.stats["detect_person"] = {"total": 0}
             return context
 
         self.logger.info(
-            "Localizing persons in %d segments (skipping %d already done)",
+            "Detecting persons in %d segments (skipping %d already done)",
             len(pending),
             len(data) - len(pending),
         )
@@ -314,7 +314,7 @@ class PersonLocalizeProcessor(BaseProcessor):
         results_map = {}
         _CHECKPOINT_EVERY = 50
 
-        for idx, row in tqdm(pending.iterrows(), total=len(pending), desc="Localizing persons"):
+        for idx, row in tqdm(pending.iterrows(), total=len(pending), desc="Detecting persons"):
             video_name = row["VIDEO_NAME"]
             video_path = os.path.join(video_dir, f"{video_name}.mp4")
 
@@ -412,7 +412,7 @@ class PersonLocalizeProcessor(BaseProcessor):
             detected, fallback, errors,
         )
 
-        context.stats["person_localize"] = {
+        context.stats["detect_person"] = {
             "total": len(pending),
             "detected": detected,
             "fallback": fallback,
@@ -429,11 +429,11 @@ class PersonLocalizeProcessor(BaseProcessor):
         """Return a full-frame fallback entry when detection is impossible."""
         w, h = 0.0, 0.0
         if os.path.exists(video_path):
-            cap = cv2.VideoCapture(video_path)
-            if cap.isOpened():
-                w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-                h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-                cap.release()
+            video_capture = cv2.VideoCapture(video_path)
+            if video_capture.isOpened():
+                w = video_capture.get(cv2.CAP_PROP_FRAME_WIDTH)
+                h = video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                video_capture.release()
         return {
             "BBOX_X1": 0.0,
             "BBOX_Y1": 0.0,

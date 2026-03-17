@@ -4,7 +4,7 @@ extractor:
 clip_video:
   codec: copy
 
-person_localize:
+detect_person:
   model: "yolov8n.pt"
   backend: "ultralytics"
   confidence_threshold: 0.5

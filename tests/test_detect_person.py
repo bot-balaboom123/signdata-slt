@@ -1,4 +1,4 @@
-"""Tests for PersonLocalizeProcessor and CropVideoProcessor.
+"""Tests for DetectPersonProcessor and CropVideoProcessor.
 
 Covers:
   - Pure logic helpers (_union_bboxes, _parse_bool, bbox padding/clamp)
@@ -30,10 +30,10 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from sign_prep.config.schema import (
     Config,
     CropVideoConfig,
-    PersonLocalizeConfig,
+    DetectPersonConfig,
     PathsConfig,
 )
-from sign_prep.processors.common.person_localize import (
+from sign_prep.processors.common.detect_person import (
     _union_bboxes,
     _sample_frames,
     _sample_frames_uniform,
@@ -54,7 +54,7 @@ def minimal_config(tmp_path):
     """Config with tmp paths; no real files required."""
     return Config(
         dataset="youtube_asl",
-        pipeline={"mode": "video", "steps": ["person_localize", "clip_video", "crop_video"]},
+        pipeline={"mode": "video", "steps": ["detect_person", "clip_video", "crop_video"]},
         paths={
             "root": str(tmp_path),
             "videos": str(tmp_path / "videos"),
@@ -105,8 +105,8 @@ def manifest_with_bbox(tmp_path):
 # ===========================================================================
 
 class TestSchemaDefaults:
-    def test_person_localize_defaults(self):
-        cfg = PersonLocalizeConfig()
+    def test_detect_person_defaults(self):
+        cfg = DetectPersonConfig()
         assert cfg.model == "yolov8n.pt"
         assert cfg.backend == "ultralytics"
         assert cfg.confidence_threshold == 0.5
@@ -127,7 +127,7 @@ class TestSchemaDefaults:
 
     def test_config_includes_new_sections(self):
         cfg = Config(dataset="youtube_asl")
-        assert isinstance(cfg.person_localize, PersonLocalizeConfig)
+        assert isinstance(cfg.detect_person, DetectPersonConfig)
         assert isinstance(cfg.crop_video, CropVideoConfig)
 
 
@@ -338,15 +338,15 @@ class TestCropGeometry:
 
 
 # ===========================================================================
-# 5. PersonLocalizeProcessor — manifest I/O (no real video / model needed)
+# 5. DetectPersonProcessor — manifest I/O (no real video / model needed)
 # ===========================================================================
 
-class TestPersonLocalizeManifest:
+class TestDetectPersonManifest:
     """Test manifest reading, writing, and resume logic without real video."""
 
     def _make_processor(self, config):
-        from sign_prep.processors.common.person_localize import PersonLocalizeProcessor
-        return PersonLocalizeProcessor(config)
+        from sign_prep.processors.common.detect_person import DetectPersonProcessor
+        return DetectPersonProcessor(config)
 
     def test_skips_already_processed_rows(self, manifest_with_bbox, tmp_path):
         """Rows where PERSON_DETECTED is already set must be skipped."""
@@ -368,8 +368,8 @@ class TestPersonLocalizeManifest:
 
     def test_fallback_writes_full_frame_bbox(self, tmp_path):
         """_fallback_row with non-existent video returns 0,0,0,0."""
-        from sign_prep.processors.common.person_localize import PersonLocalizeProcessor
-        result = PersonLocalizeProcessor._fallback_row("/nonexistent/video.mp4")
+        from sign_prep.processors.common.detect_person import DetectPersonProcessor
+        result = DetectPersonProcessor._fallback_row("/nonexistent/video.mp4")
         assert result["PERSON_DETECTED"] is False
         assert result["BBOX_X1"] == 0.0
         assert result["BBOX_Y1"] == 0.0
@@ -401,10 +401,10 @@ class TestPersonLocalizeManifest:
 
         mock_model = MagicMock()
 
-        with patch("sign_prep.processors.common.person_localize.YOLO", return_value=mock_model), \
-             patch("sign_prep.processors.common.person_localize._sample_frames",
+        with patch("sign_prep.processors.common.detect_person.YOLO", return_value=mock_model), \
+             patch("sign_prep.processors.common.detect_person._sample_frames",
                    side_effect=fake_sample_frames), \
-             patch("sign_prep.processors.common.person_localize._detect_persons_batch",
+             patch("sign_prep.processors.common.detect_person._detect_persons_batch",
                    side_effect=fake_detect_batch), \
              patch("os.path.exists", return_value=True):
 
@@ -441,10 +441,10 @@ class TestPersonLocalizeManifest:
 
         fake_frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
-        with patch("sign_prep.processors.common.person_localize.YOLO", return_value=MagicMock()), \
-             patch("sign_prep.processors.common.person_localize._sample_frames",
+        with patch("sign_prep.processors.common.detect_person.YOLO", return_value=MagicMock()), \
+             patch("sign_prep.processors.common.detect_person._sample_frames",
                    return_value=[(fake_frame, 640, 480)] * 5), \
-             patch("sign_prep.processors.common.person_localize._detect_persons_batch",
+             patch("sign_prep.processors.common.detect_person._detect_persons_batch",
                    return_value=[[] for _ in range(5)]), \
              patch("os.path.exists", return_value=True):
 
@@ -461,7 +461,7 @@ class TestPersonLocalizeManifest:
         # All rows should be fallback
         assert (df["PERSON_DETECTED"] == False).all()  # noqa: E712
         # Stats should reflect fallback count
-        assert ctx.stats["person_localize"]["fallback"] == 3
+        assert ctx.stats["detect_person"]["fallback"] == 3
 
 
 # ===========================================================================
@@ -469,8 +469,8 @@ class TestPersonLocalizeManifest:
 # ===========================================================================
 
 class TestPipelineRegistration:
-    def test_person_localize_registered(self):
-        assert "person_localize" in PROCESSOR_REGISTRY
+    def test_detect_person_registered(self):
+        assert "detect_person" in PROCESSOR_REGISTRY
 
     def test_crop_video_registered(self):
         assert "crop_video" in PROCESSOR_REGISTRY
@@ -482,12 +482,12 @@ class TestPipelineRegistration:
             dataset="youtube_asl",
             pipeline={
                 "mode": "video",
-                "steps": ["person_localize", "clip_video", "crop_video", "webdataset"],
+                "steps": ["detect_person", "clip_video", "crop_video", "webdataset"],
             },
         )
         runner = PipelineRunner(cfg)
         names = [p.name for p in runner.processors]
-        assert "person_localize" in names
+        assert "detect_person" in names
         assert "crop_video" in names
 
 
@@ -560,15 +560,15 @@ class TestSampleStrategy:
         assert len(frames) == 5
 
     def test_schema_default_is_skip_frame(self):
-        cfg = PersonLocalizeConfig()
+        cfg = DetectPersonConfig()
         assert cfg.sample_strategy == "skip_frame"
-        # frame_skip lives on ProcessingConfig, not PersonLocalizeConfig
+        # frame_skip lives on ProcessingConfig, not DetectPersonConfig
         assert not hasattr(cfg, "frame_skip")
 
     def test_schema_accepts_uniform(self):
-        cfg = PersonLocalizeConfig(sample_strategy="uniform")
+        cfg = DetectPersonConfig(sample_strategy="uniform")
         assert cfg.sample_strategy == "uniform"
 
     def test_schema_rejects_invalid_strategy(self):
         with pytest.raises(Exception):
-            PersonLocalizeConfig(sample_strategy="invalid_mode")
+            DetectPersonConfig(sample_strategy="invalid_mode")

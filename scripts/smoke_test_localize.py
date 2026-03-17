@@ -1,11 +1,11 @@
-"""Smoke test for person_localize and crop_video processors.
+"""Smoke test for detect_person and crop_video processors.
 
 Usage:
     python scripts/smoke_test_localize.py --video path/to/any_video.mp4
 
 This script:
   1. Creates a temporary workspace with a minimal manifest
-  2. Runs PersonLocalizeProcessor  → writes BBOX_* columns to manifest
+  2. Runs DetectPersonProcessor  → writes BBOX_* columns to manifest
   3. Runs ClipVideoProcessor       → clips the segment
   4. Runs CropVideoProcessor       → crops the clip to the detected person
   5. Prints a summary and shows where to find the output files
@@ -28,10 +28,10 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 
 def get_video_duration(video_path: str) -> float:
-    cap = cv2.VideoCapture(video_path)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-    cap.release()
+    video_capture = cv2.VideoCapture(video_path)
+    fps = video_capture.get(cv2.CAP_PROP_FPS)
+    frame_count = video_capture.get(cv2.CAP_PROP_FRAME_COUNT)
+    video_capture.release()
     if fps > 0:
         return frame_count / fps
     return 0.0
@@ -88,7 +88,7 @@ def run_smoke_test(video_path: str, device: str, padding: float, max_frames: int
     from sign_prep.config.schema import Config
     from sign_prep.pipeline.context import PipelineContext
     from sign_prep.datasets.youtube_asl import YouTubeASLDataset
-    from sign_prep.processors.common.person_localize import PersonLocalizeProcessor
+    from sign_prep.processors.common.detect_person import DetectPersonProcessor
     from sign_prep.processors.common.clip_video import ClipVideoProcessor
     from sign_prep.processors.common.crop_video import CropVideoProcessor
 
@@ -98,7 +98,7 @@ def run_smoke_test(video_path: str, device: str, padding: float, max_frames: int
         sys.exit(1)
 
     print(f"\n{'='*60}")
-    print(f"  Smoke test: person_localize + clip_video + crop_video")
+    print(f"  Smoke test: detect_person + clip_video + crop_video")
     print(f"  Video : {video_path}")
     print(f"  Device: {device}  |  Padding: {padding}  |  Max frames: {max_frames}  |  Segments: {num_segments} × {segment_duration}s")
     print(f"{'='*60}\n")
@@ -137,7 +137,7 @@ def run_smoke_test(video_path: str, device: str, padding: float, max_frames: int
     # ----------------------------------------------------------------
     cfg = Config(
         dataset="youtube_asl",
-        pipeline={"mode": "video", "steps": ["person_localize", "clip_video", "crop_video"]},
+        pipeline={"mode": "video", "steps": ["detect_person", "clip_video", "crop_video"]},
         paths={
             "root":          str(workspace),
             "videos":        str(videos_dir),
@@ -145,7 +145,7 @@ def run_smoke_test(video_path: str, device: str, padding: float, max_frames: int
             "clips":         str(clips_dir),
             "cropped_clips": str(cropped_dir),
         },
-        person_localize={
+        detect_person={
             "model":                "yolov8n.pt",
             "confidence_threshold": 0.5,
             "max_frames":           max_frames,
@@ -170,13 +170,13 @@ def run_smoke_test(video_path: str, device: str, padding: float, max_frames: int
     )
 
     # ----------------------------------------------------------------
-    # Step 1: person_localize
+    # Step 1: detect_person
     # ----------------------------------------------------------------
-    print("\n[2/4] Running person_localize...")
-    processor = PersonLocalizeProcessor(cfg)
+    print("\n[2/4] Running detect_person...")
+    processor = DetectPersonProcessor(cfg)
     ctx = processor.run(ctx)
 
-    stats = ctx.stats.get("person_localize", {})
+    stats = ctx.stats.get("detect_person", {})
     print(f"  detected={stats.get('detected', 0)}  "
           f"fallback={stats.get('fallback', 0)}  "
           f"errors={stats.get('errors', 0)}")
@@ -230,12 +230,12 @@ def run_smoke_test(video_path: str, device: str, padding: float, max_frames: int
         print("  [WARNING] No cropped clips produced!")
     else:
         for f in sorted(cropped_files):
-            cap = cv2.VideoCapture(str(f))
-            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            cap.release()
+            video_capture = cv2.VideoCapture(str(f))
+            w = int(video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+            h = int(video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            frames = int(video_capture.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = video_capture.get(cv2.CAP_PROP_FPS)
+            video_capture.release()
             print(f"  {f.name:30s}  {w}x{h}  {frames} frames @ {fps:.1f} fps")
 
     print(f"\n  Output directory: {workspace}")
@@ -248,7 +248,7 @@ def run_smoke_test(video_path: str, device: str, padding: float, max_frames: int
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Smoke test for person_localize + crop_video"
+        description="Smoke test for detect_person + crop_video"
     )
     parser.add_argument(
         "--video", required=True,

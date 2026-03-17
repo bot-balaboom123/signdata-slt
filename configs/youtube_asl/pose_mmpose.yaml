@@ -33,11 +33,11 @@ manifest:
 normalize:
   mode: xy_isotropic_z_minmax
   remove_z: false
-  reduction: true
-  mask_frame_level: true
-  mask_landmark_level: false
+  select_keypoints: true
+  mask_empty_frames: true
+  mask_low_confidence: false
   visibility_threshold: 0.3
-  unvisible_value: -999.0
+  missing_value: -999.0
   keypoint_indices:
     - 5
     - 6

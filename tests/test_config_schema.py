@@ -73,11 +73,11 @@ class TestSubConfigDefaults:
         n = NormalizeConfig()
         assert n.mode == "xy_isotropic_z_minmax"
         assert n.remove_z is False
-        assert n.reduction is True
-        assert n.mask_frame_level is True
-        assert n.mask_landmark_level is False
+        assert n.select_keypoints is True
+        assert n.mask_empty_frames is True
+        assert n.mask_low_confidence is False
         assert n.visibility_threshold == 0.3
-        assert n.unvisible_value == -999.0
+        assert n.missing_value == -999.0
 
     def test_processing_defaults(self):
         p = ProcessingConfig()
@@ -145,8 +145,8 @@ class TestTypeCoercion:
         assert isinstance(m.min_duration, float)
 
     def test_bool_field(self):
-        n = NormalizeConfig(reduction=False)
-        assert n.reduction is False
+        n = NormalizeConfig(select_keypoints=False)
+        assert n.select_keypoints is False
 
     def test_list_field(self):
         d = DownloadConfig(languages=["fr", "de"])

@@ -106,27 +106,27 @@ def _get_default_keypoint_indices(num_keypoints: int) -> Optional[List[int]]:
 
 def _apply_visibility_mask(
     clip_xyzv: np.ndarray,
-    mask_frame_level: bool,
-    mask_landmark_level: bool,
+    mask_empty_frames: bool,
+    mask_low_confidence: bool,
     visibility_threshold: float,
-    unvisible_value: float,
+    missing_value: float,
 ) -> np.ndarray:
     """Apply visibility masking. Returns (T, K, 3) with sentinels."""
     T, K, _ = clip_xyzv.shape
     xyz = clip_xyzv[..., :3].copy()
     vis = clip_xyzv[..., 3]
 
-    if mask_frame_level:
+    if mask_empty_frames:
         frame_all_zero = np.all(clip_xyzv == 0.0, axis=(1, 2))
         for t in range(T):
             if frame_all_zero[t]:
-                xyz[t, :, :] = unvisible_value
+                xyz[t, :, :] = missing_value
 
-    if mask_landmark_level:
+    if mask_low_confidence:
         low_vis = vis < visibility_threshold
         all_zero = np.all(clip_xyzv == 0.0, axis=-1)
         missing = np.logical_or(low_vis, all_zero)
-        xyz[missing] = unvisible_value
+        xyz[missing] = missing_value
 
     return xyz
 
@@ -134,7 +134,7 @@ def _apply_visibility_mask(
 def _normalize_clip_xyz(
     xyz_masked: np.ndarray,
     mode: str,
-    unvisible_value: float,
+    missing_value: float,
 ) -> np.ndarray:
     """Normalize landmarks using whole-clip scaling."""
     import logging
@@ -144,7 +144,7 @@ def _normalize_clip_xyz(
         raise ValueError(f"Expected shape (T, K, 3), got {xyz_masked.shape}")
 
     out = xyz_masked.copy()
-    invalid = xyz_masked == unvisible_value
+    invalid = xyz_masked == missing_value
     valid_points_mask = ~np.any(invalid, axis=-1)
 
     if not np.any(valid_points_mask):
@@ -193,19 +193,19 @@ def _normalize_clip_xyz(
 
 def _process_single_file(args) -> Tuple[str, bool, str]:
     """Process a single landmark file through the normalization pipeline."""
-    input_path, output_path, norm_cfg = args
+    input_path, output_path, normalize_config = args
     filename = os.path.basename(input_path)
 
     try:
-        if norm_cfg["skip_existing"] and os.path.exists(output_path):
+        if normalize_config["skip_existing"] and os.path.exists(output_path):
             return filename, True, "skipped (exists)"
 
         clip_raw = _load_clip(input_path)
         T, K, C = clip_raw.shape
 
         # Keypoint reduction
-        if norm_cfg["reduction"]:
-            indices = norm_cfg.get("keypoint_indices")
+        if normalize_config["select_keypoints"]:
+            indices = normalize_config.get("keypoint_indices")
             if indices is None:
                 indices = _get_default_keypoint_indices(K)
             if indices is not None:
@@ -214,19 +214,19 @@ def _process_single_file(args) -> Tuple[str, bool, str]:
         # Visibility masking
         xyz_masked = _apply_visibility_mask(
             clip_raw,
-            norm_cfg["mask_frame_level"],
-            norm_cfg["mask_landmark_level"],
-            norm_cfg["visibility_threshold"],
-            norm_cfg["unvisible_value"],
+            normalize_config["mask_empty_frames"],
+            normalize_config["mask_low_confidence"],
+            normalize_config["visibility_threshold"],
+            normalize_config["missing_value"],
         )
 
         # Normalization
         xyz_norm = _normalize_clip_xyz(
-            xyz_masked, norm_cfg["mode"], norm_cfg["unvisible_value"]
+            xyz_masked, normalize_config["mode"], normalize_config["missing_value"]
         )
 
         # Optionally drop z
-        if norm_cfg["remove_z"]:
+        if normalize_config["remove_z"]:
             xyz_norm = xyz_norm[..., :2]
 
         # Flatten
@@ -260,15 +260,15 @@ class NormalizeProcessor(BaseProcessor):
             context.stats["normalize"] = {"total": 0}
             return context
 
-        norm_cfg = {
+        normalize_config = {
             "mode": cfg.normalize.mode,
             "remove_z": cfg.normalize.remove_z,
-            "reduction": cfg.normalize.reduction,
+            "select_keypoints": cfg.normalize.select_keypoints,
             "keypoint_indices": cfg.normalize.keypoint_indices,
-            "mask_frame_level": cfg.normalize.mask_frame_level,
-            "mask_landmark_level": cfg.normalize.mask_landmark_level,
+            "mask_empty_frames": cfg.normalize.mask_empty_frames,
+            "mask_low_confidence": cfg.normalize.mask_low_confidence,
             "visibility_threshold": cfg.normalize.visibility_threshold,
-            "unvisible_value": cfg.normalize.unvisible_value,
+            "missing_value": cfg.normalize.missing_value,
             "skip_existing": cfg.processing.skip_existing,
         }
 
@@ -276,7 +276,7 @@ class NormalizeProcessor(BaseProcessor):
         for inp in npy_files:
             rel = os.path.relpath(inp, input_dir)
             out = os.path.join(output_dir, rel)
-            tasks.append((inp, out, norm_cfg))
+            tasks.append((inp, out, normalize_config))
 
         self.logger.info("Normalizing %d files from %s", len(tasks), input_dir)
 

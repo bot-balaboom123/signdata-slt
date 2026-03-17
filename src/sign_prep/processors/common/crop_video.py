@@ -1,7 +1,7 @@
 """Crop video processor: crop clipped videos to the detected person bbox.
 
 Reads BBOX_* and PERSON_DETECTED columns from the manifest (written by
-person_localize), applies padding, clamps to frame boundaries, and
+detect_person), applies padding, clamps to frame boundaries, and
 re-encodes using ffmpeg.
 
 If PERSON_DETECTED is False, the clip is copied as-is (no crop).
@@ -73,12 +73,12 @@ def _crop_single_video(args) -> Tuple[str, bool, str]:
             return name, True, "no-person copy"
 
         # Read frame size from the clip itself
-        cap = cv2.VideoCapture(clip_path)
-        if not cap.isOpened():
+        video_capture = cv2.VideoCapture(clip_path)
+        if not video_capture.isOpened():
             return name, False, "cannot open clip to read dimensions"
-        frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        cap.release()
+        frame_w = int(video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_h = int(video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        video_capture.release()
 
         if frame_w == 0 or frame_h == 0:
             return name, False, "invalid frame dimensions"
@@ -139,7 +139,7 @@ def _crop_single_video(args) -> Tuple[str, bool, str]:
 class CropVideoProcessor(BaseProcessor):
     """Re-encode clipped videos cropped to the detected person bbox.
 
-    Reads the manifest for BBOX_* columns written by PersonLocalizeProcessor.
+    Reads the manifest for BBOX_* columns written by DetectPersonProcessor.
     Input:  paths.clips      (produced by clip_video)
     Output: paths.cropped_clips
     """
@@ -162,7 +162,7 @@ class CropVideoProcessor(BaseProcessor):
         os.makedirs(cropped_dir, exist_ok=True)
 
         # ----------------------------------------------------------------
-        # Load manifest — must have bbox columns from person_localize
+        # Load manifest — must have bbox columns from detect_person
         # ----------------------------------------------------------------
         data = pd.read_csv(manifest_path, delimiter="\t", on_bad_lines="skip")
 
@@ -171,7 +171,7 @@ class CropVideoProcessor(BaseProcessor):
         if missing:
             raise RuntimeError(
                 f"Manifest is missing columns: {missing}. "
-                "Run the 'person_localize' step first."
+                "Run the 'detect_person' step first."
             )
 
         data = data[

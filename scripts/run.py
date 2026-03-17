@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Convenience wrapper for running the sign_prep pipeline.
 
-To smoke-test person_localize + crop_video on a single video without a full
+To smoke-test detect_person + crop_video on a single video without a full
 dataset, use the standalone helper:
 
     python scripts/smoke_test_localize.py --video path/to/video.mp4

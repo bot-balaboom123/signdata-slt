@@ -131,7 +131,7 @@ All paths are resolved relative to the project root if not absolute. Defaults ar
 | `det_model_config` | `str` | `""` | RTMDet model config path |
 | `det_model_checkpoint` | `str` | `""` | RTMDet checkpoint path |
 | `bbox_threshold` | `float` | `0.5` | Detection bounding-box threshold |
-| `kpt_threshold` | `float` | `0.3` | Keypoint confidence threshold |
+| `keypoint_threshold` | `float` | `0.3` | Keypoint confidence threshold |
 | `add_visible` | `bool` | `true` | Include visibility as 4th channel |
 | `device` | `str` | `"cuda:0"` | Inference device |
 
@@ -141,12 +141,12 @@ All paths are resolved relative to the project root if not absolute. Defaults ar
 |---|---|---|---|
 | `mode` | `str` | `"xy_isotropic_z_minmax"` | Normalization mode (`isotropic_3d` or `xy_isotropic_z_minmax`) |
 | `remove_z` | `bool` | `false` | Drop z-coordinate after normalization |
-| `reduction` | `bool` | `true` | Reduce to subset of keypoints |
+| `select_keypoints` | `bool` | `true` | Reduce to subset of keypoints |
 | `keypoint_indices` | `list[int]?` | `null` | Custom keypoint indices (auto-detected if null) |
-| `mask_frame_level` | `bool` | `true` | Mask frames with all-zero landmarks |
-| `mask_landmark_level` | `bool` | `false` | Mask individual low-visibility landmarks |
+| `mask_empty_frames` | `bool` | `true` | Mask frames with all-zero landmarks |
+| `mask_low_confidence` | `bool` | `false` | Mask individual low-visibility landmarks |
 | `visibility_threshold` | `float` | `0.3` | Visibility score cutoff |
-| `unvisible_value` | `float` | `-999.0` | Fill value for masked landmarks |
+| `missing_value` | `float` | `-999.0` | Fill value for masked landmarks |
 
 ### `processing`
 

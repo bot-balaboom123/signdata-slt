@@ -96,9 +96,9 @@ def _build_processing_tasks(
         if fps_range is not None:
             if video_path not in video_fps_cache:
                 video_fps_cache[video_path] = get_video_fps(video_path)
-            vfps = video_fps_cache[video_path]
+            video_fps = video_fps_cache[video_path]
             min_fps, max_fps = fps_range
-            if vfps <= 0.0 or vfps < float(min_fps) or vfps > float(max_fps):
+            if video_fps <= 0.0 or video_fps < float(min_fps) or video_fps > float(max_fps):
                 stats["fps_out_of_range"] += 1
                 continue
 
@@ -119,7 +119,7 @@ _worker_config_dict = None
 
 
 def _iter_batches_with_sampling(
-    cap: cv2.VideoCapture,
+    video_capture: cv2.VideoCapture,
     start_frame: int,
     end_frame: int,
     sampler: FPSSampler,
@@ -132,7 +132,7 @@ def _iter_batches_with_sampling(
     batch = []
     current = start_frame
     while current <= end_frame:
-        ret, frame = cap.read()
+        ret, frame = video_capture.read()
         if not ret:
             break
         if sampler.take():
@@ -179,21 +179,21 @@ def _process_segment_mediapipe(args):
     from ...config.schema import ExtractorConfig
     from ...extractors.mediapipe import MediaPipeExtractor
 
-    cap = None
+    video_capture = None
     extractor = None
     try:
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
+        video_capture = cv2.VideoCapture(video_path)
+        if not video_capture.isOpened():
             return
 
-        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        fps = video_capture.get(cv2.CAP_PROP_FPS) or 0.0
         target_fps = config_dict.get("target_fps")
         frame_skip = config_dict.get("frame_skip", 2)
         sampler = FPSSampler(src_fps=fps, reduce_to=target_fps, frame_skip_by=frame_skip)
 
         start_frame = int(start_time * fps)
         end_frame = int(end_time * fps)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        video_capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
         ext_config = ExtractorConfig(**config_dict["extractor"])
         extractor = MediaPipeExtractor(ext_config)
@@ -204,7 +204,7 @@ def _process_segment_mediapipe(args):
         # Process frames in rolling batches (bounded memory)
         sequences = []
         for batch_frames in _iter_batches_with_sampling(
-            cap, start_frame, end_frame, sampler, batch_size
+            video_capture, start_frame, end_frame, sampler, batch_size
         ):
             batch_results = extractor.process_batch(
                 batch_frames, fallback_on_error=True
@@ -223,8 +223,8 @@ def _process_segment_mediapipe(args):
     except Exception as e:
         logger.error("Error processing %s: %s", video_path, e)
     finally:
-        if cap is not None:
-            cap.release()
+        if video_capture is not None:
+            video_capture.release()
         if extractor is not None:
             extractor.close()
         gc.collect()
@@ -241,20 +241,20 @@ def _process_segment_mmpose(args):
     from ...config.schema import ExtractorConfig
     from ...extractors.mmpose import MMPoseExtractor
 
-    cap = None
+    video_capture = None
     try:
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
+        video_capture = cv2.VideoCapture(video_path)
+        if not video_capture.isOpened():
             return
 
-        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        fps = video_capture.get(cv2.CAP_PROP_FPS) or 0.0
         target_fps = config_dict.get("target_fps")
         frame_skip = config_dict.get("frame_skip", 2)
         sampler = FPSSampler(src_fps=fps, reduce_to=target_fps, frame_skip_by=frame_skip)
 
         start_frame = int(start_time * fps)
         end_frame = int(end_time * fps)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        video_capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
         ext_config = ExtractorConfig(**config_dict["extractor"])
         extractor = MMPoseExtractor(
@@ -271,7 +271,7 @@ def _process_segment_mmpose(args):
         sequences = []
 
         for batch_frames in _iter_batches_with_sampling(
-            cap, start_frame, end_frame, sampler, batch_size
+            video_capture, start_frame, end_frame, sampler, batch_size
         ):
             batch_results = extractor.process_batch(
                 batch_frames, fallback_on_error=True
@@ -295,8 +295,8 @@ def _process_segment_mmpose(args):
     except Exception as e:
         logger.error("Error processing %s: %s", video_path, e)
     finally:
-        if cap is not None:
-            cap.release()
+        if video_capture is not None:
+            video_capture.release()
         gc.collect()
         try:
             import torch

@@ -87,10 +87,10 @@ class TestApplyVisibilityMask:
 
         result = _apply_visibility_mask(
             arr,
-            mask_frame_level=True,
-            mask_landmark_level=False,
+            mask_empty_frames=True,
+            mask_low_confidence=False,
             visibility_threshold=0.3,
-            unvisible_value=SENTINEL,
+            missing_value=SENTINEL,
         )
         assert result.shape == (3, 4, 3)
         # Frame 0 and 2 are all-zero → sentinel
@@ -107,10 +107,10 @@ class TestApplyVisibilityMask:
 
         result = _apply_visibility_mask(
             arr,
-            mask_frame_level=False,
-            mask_landmark_level=True,
+            mask_empty_frames=False,
+            mask_low_confidence=True,
             visibility_threshold=0.3,
-            unvisible_value=SENTINEL,
+            missing_value=SENTINEL,
         )
         assert result.shape == (2, 3, 3)
         # Landmark with low vis → sentinel
@@ -123,10 +123,10 @@ class TestApplyVisibilityMask:
         arr = np.zeros((2, 3, 4), dtype=np.float32)
         result = _apply_visibility_mask(
             arr,
-            mask_frame_level=False,
-            mask_landmark_level=False,
+            mask_empty_frames=False,
+            mask_low_confidence=False,
             visibility_threshold=0.3,
-            unvisible_value=SENTINEL,
+            missing_value=SENTINEL,
         )
         assert result.shape == (2, 3, 3)
         np.testing.assert_array_equal(result, arr[:, :, :3])
@@ -136,10 +136,10 @@ class TestApplyVisibilityMask:
         arr = np.ones((5, 10, 4), dtype=np.float32)
         result = _apply_visibility_mask(
             arr,
-            mask_frame_level=True,
-            mask_landmark_level=True,
+            mask_empty_frames=True,
+            mask_low_confidence=True,
             visibility_threshold=0.3,
-            unvisible_value=SENTINEL,
+            missing_value=SENTINEL,
         )
         assert result.shape == (5, 10, 3)
 

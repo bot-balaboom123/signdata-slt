@@ -11,9 +11,9 @@ def validate_video_file(video_path: str) -> bool:
     if not os.path.exists(video_path):
         return False
     try:
-        cap = cv2.VideoCapture(video_path)
-        is_valid = cap.isOpened()
-        cap.release()
+        video_capture = cv2.VideoCapture(video_path)
+        is_valid = video_capture.isOpened()
+        video_capture.release()
         return is_valid
     except Exception:
         return False
@@ -22,11 +22,11 @@ def validate_video_file(video_path: str) -> bool:
 def get_video_fps(video_path: str) -> float:
     """Return video FPS (frames per second) as float."""
     try:
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
+        video_capture = cv2.VideoCapture(video_path)
+        if not video_capture.isOpened():
             return 0.0
-        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
-        cap.release()
+        fps = video_capture.get(cv2.CAP_PROP_FPS) or 0.0
+        video_capture.release()
         return float(fps)
     except Exception:
         return 0.0
