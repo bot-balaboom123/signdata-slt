@@ -9,43 +9,19 @@ import pytest
 from sign_prep.processors.common.normalize import (
     _apply_keypoint_reduction,
     _apply_visibility_mask,
-    _get_default_keypoint_indices,
     _normalize_clip_xyz,
+    _process_single_file,
 )
-
-
-# ── _get_default_keypoint_indices ───────────────────────────────────────────
-
-class TestGetDefaultKeypointIndices:
-    def test_85_returns_none(self):
-        assert _get_default_keypoint_indices(85) is None
-
-    def test_133_returns_85_indices(self):
-        indices = _get_default_keypoint_indices(133)
-        assert indices is not None
-        assert len(indices) == 85
-        assert all(0 <= i < 133 for i in indices)
-
-    def test_553_returns_85_indices(self):
-        indices = _get_default_keypoint_indices(553)
-        assert indices is not None
-        assert len(indices) == 85
-        assert all(0 <= i < 553 for i in indices)
-
-    def test_543_returns_83_indices(self):
-        indices = _get_default_keypoint_indices(543)
-        assert indices is not None
-        assert len(indices) == 83
-        assert all(0 <= i < 543 for i in indices)
-
-    def test_unknown_returns_none(self):
-        assert _get_default_keypoint_indices(200) is None
-        assert _get_default_keypoint_indices(0) is None
 
 
 # ── _apply_keypoint_reduction ───────────────────────────────────────────────
 
 class TestApplyKeypointReduction:
+    def test_empty_indices_raises(self):
+        arr = np.zeros((5, 10, 4), dtype=np.float32)
+        with pytest.raises(ValueError, match="empty"):
+            _apply_keypoint_reduction(arr, [])
+
     def test_select_indices(self):
         arr = np.arange(5 * 10 * 4, dtype=np.float32).reshape(5, 10, 4)
         indices = [0, 3, 7]
@@ -61,9 +37,9 @@ class TestApplyKeypointReduction:
         result = _apply_keypoint_reduction(arr, indices)
         assert result.shape == (10, 85, 4)
 
-    def test_out_of_bounds_raises(self):
+    def test_out_of_bounds_mentions_preset(self):
         arr = np.zeros((5, 10, 4), dtype=np.float32)
-        with pytest.raises(ValueError, match="out of range"):
+        with pytest.raises(ValueError, match="keypoint_preset"):
             _apply_keypoint_reduction(arr, [0, 5, 15])
 
     def test_wrong_ndim_raises(self):
@@ -234,3 +210,95 @@ class TestNormalizeClipXYZ:
         xyz = np.zeros((2, 3), dtype=np.float32)
         with pytest.raises(ValueError, match="Expected shape"):
             _normalize_clip_xyz(xyz, "isotropic_3d", SENTINEL)
+
+
+# ── _process_single_file integration ──────────────────────────────────────
+
+class TestProcessSingleFileIntegration:
+    """End-to-end tests for preset resolution inside _process_single_file."""
+
+    def _make_config(self, **overrides):
+        config = {
+            "select_keypoints": True,
+            "keypoint_preset": None,
+            "keypoint_indices": None,
+            "mask_empty_frames": True,
+            "mask_low_confidence": False,
+            "visibility_threshold": 0.3,
+            "missing_value": SENTINEL,
+            "mode": "xy_isotropic_z_minmax",
+            "remove_z": False,
+            "skip_existing": False,
+        }
+        config.update(overrides)
+        return config
+
+    def test_preset_reduces_keypoints(self, tmp_path):
+        """Preset name resolves and reduces 553 → 85 keypoints."""
+        arr = np.random.rand(10, 553, 4).astype(np.float32)
+        inp = str(tmp_path / "input.npy")
+        out = str(tmp_path / "output.npy")
+        np.save(inp, arr)
+
+        config = self._make_config(keypoint_preset="mediapipe_553_to_85")
+        fname, ok, msg = _process_single_file((inp, out, config))
+
+        assert ok, f"Failed: {msg}"
+        result = np.load(out)
+        # 85 keypoints * 3 coords (xyz, no z removal)
+        assert result.shape == (10, 85 * 3)
+
+    def test_manual_indices_still_work(self, tmp_path):
+        """Manual keypoint_indices without preset still works."""
+        arr = np.random.rand(5, 10, 4).astype(np.float32)
+        inp = str(tmp_path / "input.npy")
+        out = str(tmp_path / "output.npy")
+        np.save(inp, arr)
+
+        config = self._make_config(keypoint_indices=[0, 2, 4])
+        fname, ok, msg = _process_single_file((inp, out, config))
+
+        assert ok, f"Failed: {msg}"
+        result = np.load(out)
+        assert result.shape == (5, 3 * 3)
+
+    def test_no_preset_no_indices_passes_through(self, tmp_path):
+        """Neither preset nor indices → no reduction (all keypoints kept)."""
+        arr = np.random.rand(5, 10, 4).astype(np.float32)
+        inp = str(tmp_path / "input.npy")
+        out = str(tmp_path / "output.npy")
+        np.save(inp, arr)
+
+        config = self._make_config()
+        fname, ok, msg = _process_single_file((inp, out, config))
+
+        assert ok, f"Failed: {msg}"
+        result = np.load(out)
+        assert result.shape == (5, 10 * 3)
+
+    def test_preset_mismatch_reports_error(self, tmp_path):
+        """553-preset applied to 133-keypoint file → clear error."""
+        arr = np.random.rand(5, 133, 4).astype(np.float32)
+        inp = str(tmp_path / "input.npy")
+        out = str(tmp_path / "output.npy")
+        np.save(inp, arr)
+
+        config = self._make_config(keypoint_preset="mediapipe_553_to_85")
+        fname, ok, msg = _process_single_file((inp, out, config))
+
+        assert not ok
+        assert "keypoint_preset" in msg
+
+    def test_mmpose_preset(self, tmp_path):
+        """MMPose preset reduces 133 → 85."""
+        arr = np.random.rand(8, 133, 4).astype(np.float32)
+        inp = str(tmp_path / "input.npy")
+        out = str(tmp_path / "output.npy")
+        np.save(inp, arr)
+
+        config = self._make_config(keypoint_preset="mmpose_133_to_85")
+        fname, ok, msg = _process_single_file((inp, out, config))
+
+        assert ok, f"Failed: {msg}"
+        result = np.load(out)
+        assert result.shape == (8, 85 * 3)

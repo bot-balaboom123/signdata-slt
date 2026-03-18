@@ -122,12 +122,28 @@ class TestPipelineModeValidation:
 class TestNormalizeOptionalFields:
     """NormalizeConfig optional fields."""
 
+    def test_keypoint_preset_none(self):
+        n = NormalizeConfig()
+        assert n.keypoint_preset is None
+
+    def test_keypoint_preset_set(self):
+        n = NormalizeConfig(keypoint_preset="mediapipe_553_to_85")
+        assert n.keypoint_preset == "mediapipe_553_to_85"
+
     def test_keypoint_indices_none(self):
         n = NormalizeConfig()
         assert n.keypoint_indices is None
 
     def test_keypoint_indices_set(self):
         n = NormalizeConfig(keypoint_indices=[0, 1, 2])
+        assert n.keypoint_indices == [0, 1, 2]
+
+    def test_both_preset_and_indices_coexist(self):
+        n = NormalizeConfig(
+            keypoint_preset="mediapipe_553_to_85",
+            keypoint_indices=[0, 1, 2],
+        )
+        assert n.keypoint_preset == "mediapipe_553_to_85"
         assert n.keypoint_indices == [0, 1, 2]
 
 

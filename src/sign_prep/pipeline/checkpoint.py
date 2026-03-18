@@ -89,6 +89,7 @@ STAGE_HASH_FIELDS: Dict[str, List[str]] = {
         "normalize.mode",
         "normalize.remove_z",
         "normalize.select_keypoints",
+        "normalize.keypoint_preset",
         "normalize.keypoint_indices",
         "normalize.mask_empty_frames",
         "normalize.mask_low_confidence",

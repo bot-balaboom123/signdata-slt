@@ -1,6 +1,6 @@
 """Pydantic configuration models."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, field_validator
 from typing import Optional, List, Literal
 
 
@@ -42,11 +42,24 @@ class NormalizeConfig(BaseModel):
     mode: Literal["isotropic_3d", "xy_isotropic_z_minmax"] = "xy_isotropic_z_minmax"
     remove_z: bool = False
     select_keypoints: bool = True
+    keypoint_preset: Optional[str] = None
     keypoint_indices: Optional[List[int]] = None
     mask_empty_frames: bool = True
     mask_low_confidence: bool = False
     visibility_threshold: float = 0.3
     missing_value: float = -999.0
+
+    @field_validator("keypoint_preset")
+    @classmethod
+    def validate_keypoint_preset(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            from sign_prep.presets import KEYPOINT_PRESETS
+            if v not in KEYPOINT_PRESETS:
+                raise ValueError(
+                    f"Unknown keypoint preset '{v}'. "
+                    f"Available: {sorted(KEYPOINT_PRESETS.keys())}"
+                )
+        return v
 
 
 class ProcessingConfig(BaseModel):

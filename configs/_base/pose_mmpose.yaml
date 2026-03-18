@@ -14,6 +14,7 @@ normalize:
   mode: xy_isotropic_z_minmax
   remove_z: false
   select_keypoints: true
+  keypoint_preset: mmpose_133_to_85
   mask_empty_frames: true
   mask_low_confidence: false
   visibility_threshold: 0.3
