@@ -17,21 +17,7 @@ from ..base import BaseProcessor
 from ...registry import register_processor
 from ...utils.video import FPSSampler, validate_video_file, get_video_fps
 from ...utils.files import get_video_filenames
-
-
-def _read_manifest_csv(csv_file: str) -> Tuple[pd.DataFrame, str, str]:
-    """Read manifest CSV and detect timestamp column format."""
-    data = pd.read_csv(csv_file, delimiter="\t", on_bad_lines="skip")
-    columns = data.columns.tolist()
-
-    if "START" in columns and "END" in columns:
-        return data, "START", "END"
-    elif "START_REALIGNED" in columns and "END_REALIGNED" in columns:
-        return data, "START_REALIGNED", "END_REALIGNED"
-    else:
-        raise ValueError(
-            "Neither START/END nor START_REALIGNED/END_REALIGNED columns found"
-        )
+from ...utils.manifest import read_manifest, get_timing_columns
 
 
 def _build_processing_tasks(
@@ -318,9 +304,9 @@ class ExtractProcessor(BaseProcessor):
         if context.manifest_df is not None:
             timestamp_data_full = context.manifest_df
         else:
-            timestamp_data_full, _, _ = _read_manifest_csv(manifest_path)
+            timestamp_data_full = read_manifest(manifest_path, normalize_columns=False)
 
-        timestamp_data_full, start_col, end_col = _read_manifest_csv(manifest_path)
+        start_col, end_col = get_timing_columns(timestamp_data_full)
         timestamp_data = timestamp_data_full[
             ["VIDEO_NAME", "SENTENCE_NAME", start_col, end_col]
         ].dropna()

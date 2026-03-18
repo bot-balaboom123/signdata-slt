@@ -19,6 +19,7 @@ from tqdm import tqdm
 
 from ..base import BaseProcessor
 from ...registry import register_processor
+from ...utils.manifest import read_manifest, get_timing_columns
 
 # Module-level import so tests can patch sign_prep...detect_person.YOLO
 # ultralytics is an optional dependency; import error surfaces only at runtime.
@@ -254,15 +255,8 @@ class DetectPersonProcessor(BaseProcessor):
         # ----------------------------------------------------------------
         # Load manifest
         # ----------------------------------------------------------------
-        data = pd.read_csv(manifest_path, delimiter="\t", on_bad_lines="skip")
-        columns = data.columns.tolist()
-
-        if "START" in columns and "END" in columns:
-            start_col, end_col = "START", "END"
-        elif "START_REALIGNED" in columns and "END_REALIGNED" in columns:
-            start_col, end_col = "START_REALIGNED", "END_REALIGNED"
-        else:
-            raise ValueError("No recognized timestamp columns found in manifest.")
+        data = read_manifest(manifest_path, normalize_columns=False)
+        start_col, end_col = get_timing_columns(data)
 
         # If columns already exist from a previous run, we skip rows that
         # were already processed (PERSON_DETECTED is not NaN).

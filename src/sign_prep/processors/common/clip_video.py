@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from ..base import BaseProcessor
 from ...registry import register_processor
+from ...utils.manifest import read_manifest, get_timing_columns
 
 
 def _clip_single_video(args) -> Tuple[str, bool, str]:
@@ -58,17 +59,6 @@ def _clip_single_video(args) -> Tuple[str, bool, str]:
         return name, False, str(e)
 
 
-def _read_manifest_csv(csv_file: str) -> Tuple[pd.DataFrame, str, str]:
-    """Read manifest CSV and detect timestamp column format."""
-    data = pd.read_csv(csv_file, delimiter="\t", on_bad_lines="skip")
-    columns = data.columns.tolist()
-    if "START" in columns and "END" in columns:
-        return data, "START", "END"
-    elif "START_REALIGNED" in columns and "END_REALIGNED" in columns:
-        return data, "START_REALIGNED", "END_REALIGNED"
-    raise ValueError("No recognized timestamp columns found")
-
-
 @register_processor("clip_video")
 class ClipVideoProcessor(BaseProcessor):
     name = "clip_video"
@@ -81,7 +71,8 @@ class ClipVideoProcessor(BaseProcessor):
 
         os.makedirs(clips_dir, exist_ok=True)
 
-        data, start_col, end_col = _read_manifest_csv(manifest_path)
+        data = read_manifest(manifest_path, normalize_columns=False)
+        start_col, end_col = get_timing_columns(data)
         data = data[["VIDEO_NAME", "SENTENCE_NAME", start_col, end_col]].dropna()
 
         codec = cfg.clip_video.codec
