@@ -7,9 +7,12 @@ extract.py, clip_video.py, webdataset.py, and detect_person.py.
 """
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import pandas as pd
+
+# Common video extensions produced by yt-dlp and ffmpeg
+_VIDEO_EXTENSIONS: Sequence[str] = (".mp4", ".webm", ".mkv", ".avi", ".mov")
 
 # ---------------------------------------------------------------------------
 # Canonical column names
@@ -178,6 +181,37 @@ def has_timing(df: pd.DataFrame) -> bool:
     return bool((df["START"].notna() & df["END"].notna()).any())
 
 
+def find_video_file(
+    base_dir: Union[str, Path],
+    stem: str,
+) -> Path:
+    """Find a video file by stem, trying common video extensions.
+
+    Tries ``.mp4`` first (most common), then other extensions.
+    Falls back to ``{stem}.mp4`` if no file is found on disk, so that
+    callers can rely on a deterministic return value.
+
+    Parameters
+    ----------
+    base_dir : str or Path
+        Directory containing video files.
+    stem : str
+        File stem (e.g. a VIDEO_ID or SAMPLE_ID).
+
+    Returns
+    -------
+    Path
+        Path to the first matching video file, or ``base_dir/{stem}.mp4``
+        as a fallback.
+    """
+    base_dir = Path(base_dir)
+    for ext in _VIDEO_EXTENSIONS:
+        candidate = base_dir / f"{stem}{ext}"
+        if candidate.exists():
+            return candidate
+    return base_dir / f"{stem}.mp4"
+
+
 def resolve_video_path(
     row: pd.Series,
     base_dir: Union[str, Path],
@@ -186,7 +220,7 @@ def resolve_video_path(
 
     Resolution order:
     1. If ``REL_PATH`` column is present and non-null → ``base_dir / REL_PATH``
-    2. Otherwise → ``base_dir / f"{VIDEO_ID}.mp4"``
+    2. Otherwise → ``find_video_file(base_dir, VIDEO_ID)`` (extension-aware)
 
     Parameters
     ----------
@@ -208,7 +242,7 @@ def resolve_video_path(
         return base_dir / str(rel_path)
 
     video_id = row.get("VIDEO_ID", "")
-    return base_dir / f"{video_id}.mp4"
+    return find_video_file(base_dir, video_id)
 
 
 def get_timing_columns(df: pd.DataFrame) -> Tuple[str, str]:

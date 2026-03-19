@@ -4,6 +4,21 @@ import re
 from typing import Optional, Dict
 
 import ftfy
+from pydantic import BaseModel
+
+
+class TextProcessingConfig(BaseModel):
+    """Text normalization options passed to ``normalize_text()``.
+
+    Used by dataset adapters that need configurable text processing
+    (YouTube-ASL, OpenASL, etc.) via their ``source.text_processing``
+    config field.
+    """
+
+    fix_encoding: bool = True
+    normalize_whitespace: bool = True
+    lowercase: bool = False
+    strip_punctuation: bool = False
 
 
 def normalize_text(

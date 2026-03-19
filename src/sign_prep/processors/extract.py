@@ -17,7 +17,7 @@ from .base import BaseProcessor
 from ..registry import register_processor
 from ..utils.video import FPSSampler, validate_video_file, get_video_fps
 from ..utils.files import get_video_filenames
-from ..utils.manifest import read_manifest, get_timing_columns
+from ..utils.manifest import read_manifest, get_timing_columns, find_video_file
 
 
 def _build_processing_tasks(
@@ -70,7 +70,7 @@ def _build_processing_tasks(
             video_path = os.path.join(video_dir, f"{sentence_name}.mp4")
             start, end = 0.0, 86400.0  # Sentinel; workers stop at EOF
         else:
-            video_path = os.path.join(video_dir, f"{video_name}.mp4")
+            video_path = str(find_video_file(video_dir, video_name))
             start, end = row[start_col], row[end_col]
 
         output_path = os.path.join(output_dir, f"{sentence_name}.npy")

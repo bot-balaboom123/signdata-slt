@@ -24,7 +24,7 @@ from tqdm import tqdm
 
 from .base import BaseProcessor
 from ..registry import register_processor
-from ..utils.manifest import read_manifest
+from ..utils.manifest import read_manifest, find_video_file
 
 
 class ObfuscateConfig(BaseModel):
@@ -222,7 +222,7 @@ class ObfuscateProcessor(BaseProcessor):
                 continue
             seen.add(file_id)
 
-            video_path = os.path.join(video_dir, f"{file_id}.mp4")
+            video_path = str(find_video_file(video_dir, file_id))
             if not os.path.exists(video_path):
                 missing += 1
                 continue

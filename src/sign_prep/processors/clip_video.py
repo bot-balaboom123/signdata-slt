@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from .base import BaseProcessor
 from ..registry import register_processor
-from ..utils.manifest import read_manifest, get_timing_columns
+from ..utils.manifest import read_manifest, get_timing_columns, find_video_file
 
 
 def _clip_single_video(args) -> Tuple[str, bool, str]:
@@ -80,7 +80,7 @@ class ClipVideoProcessor(BaseProcessor):
 
         tasks = []
         for _, row in data.iterrows():
-            vpath = os.path.join(video_dir, f"{row.VIDEO_ID}.mp4")
+            vpath = str(find_video_file(video_dir, row.VIDEO_ID))
             opath = os.path.join(clips_dir, f"{row.SAMPLE_ID}.mp4")
             if not os.path.exists(vpath):
                 continue

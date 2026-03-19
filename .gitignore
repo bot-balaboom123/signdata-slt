@@ -175,6 +175,7 @@ src/sign_prep/models/checkpoints/*.pth
 
 # Test notebooks and temporary scripts
 test.py
+acquire_report/
 
 # Temporary files
 *.tmp

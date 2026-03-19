@@ -12,10 +12,12 @@ for _, _module_name, _ in pkgutil.iter_modules(__path__):
 
 from .youtube_asl import YouTubeASLDataset
 from .how2sign import How2SignDataset
+from .openasl import OpenASLDataset
 
 __all__ = [
     "DatasetAdapter",
     "BaseDataset",
     "YouTubeASLDataset",
     "How2SignDataset",
+    "OpenASLDataset",
 ]

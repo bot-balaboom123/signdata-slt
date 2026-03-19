@@ -4,16 +4,17 @@ Handles video/transcript acquisition from YouTube and manifest generation
 from transcript JSON files.
 
 Source config (parsed from ``config.source``):
-    video_ids_file: str       — path to video ID list
-    languages: list[str]      — transcript language codes
-    download_format: str      — yt-dlp format selector
-    rate_limit: str           — download rate limit
-    concurrent_fragments: int — parallel download fragments
-    max_text_length: int      — max characters per segment
-    min_duration: float       — min segment duration (seconds)
-    max_duration: float       — max segment duration (seconds)
-    text_processing: dict     — keys: fix_encoding, normalize_whitespace,
-                                lowercase, strip_punctuation
+    video_ids_file: str            — path to video ID list
+    languages: list[str]           — transcript language codes
+    availability_policy: str       — fail_fast | drop_unavailable | mark_unavailable
+    download_format: str           — yt-dlp format selector
+    rate_limit: str                — download rate limit
+    concurrent_fragments: int      — parallel download fragments
+    max_text_length: int           — max characters per segment
+    min_duration: float            — min segment duration (seconds)
+    max_duration: float            — max segment duration (seconds)
+    text_processing: dict          — keys: fix_encoding, normalize_whitespace,
+                                     lowercase, strip_punctuation
 """
 
 import csv
@@ -31,7 +32,13 @@ from tqdm import tqdm
 
 from .base import DatasetAdapter
 from ..registry import register_dataset
-from ..utils.text import normalize_text
+from ..utils.availability import (
+    AvailabilityPolicy,
+    apply_availability_policy,
+    get_existing_video_ids,
+    write_acquire_report,
+)
+from ..utils.text import TextProcessingConfig, normalize_text
 
 logger = logging.getLogger(__name__)
 
@@ -40,14 +47,6 @@ logger = logging.getLogger(__name__)
 # Typed source config
 # ---------------------------------------------------------------------------
 
-class TextProcessingConfig(BaseModel):
-    """Text normalization options passed to ``normalize_text()``."""
-    fix_encoding: bool = True
-    normalize_whitespace: bool = True
-    lowercase: bool = False
-    strip_punctuation: bool = False
-
-
 class YouTubeASLSourceConfig(BaseModel):
     """Typed config for YouTube-ASL adapter.
 
@@ -55,6 +54,7 @@ class YouTubeASLSourceConfig(BaseModel):
     """
     video_ids_file: str = ""
     languages: List[str] = ["en"]
+    availability_policy: AvailabilityPolicy = "drop_unavailable"
     download_format: str = "worstvideo[height>=720][fps>=24]/bestvideo[height>=480]"
     rate_limit: str = "5M"
     concurrent_fragments: int = 5
@@ -82,6 +82,10 @@ def _load_video_ids(file_path: str) -> Set[str]:
     """Load video IDs from a text file."""
     with open(file_path, "r", encoding="utf-8") as f:
         return {line.strip() for line in f if line.strip()}
+
+
+# NOTE: _get_existing_ids is kept for transcript scanning (.json).
+# For video scanning, use get_existing_video_ids from utils.availability.
 
 
 # ---------------------------------------------------------------------------
@@ -125,9 +129,23 @@ class YouTubeASLDataset(DatasetAdapter):
 
         # Download videos
         self.logger.info("Starting video download...")
-        video_stats = self._download_videos(
+        video_result = self._download_videos(
             source.video_ids_file, video_dir, source
         )
+        missing = video_result.pop("missing")
+        video_stats = video_result
+
+        # Write acquire report
+        report_dir = os.path.join(config.paths.root, "acquire_report")
+        write_acquire_report(report_dir, video_stats, missing)
+
+        # Enforce fail_fast at acquire time
+        if source.availability_policy == "fail_fast" and video_stats["errors"] > 0:
+            raise RuntimeError(
+                f"{video_stats['errors']} download(s) failed with "
+                f"availability_policy='fail_fast'. "
+                f"See {report_dir}/download_report.json for details."
+            )
 
         context.stats["acquire"] = {
             "transcripts": transcript_stats,
@@ -201,16 +219,23 @@ class YouTubeASLDataset(DatasetAdapter):
             UnavailableVideoError,
         )
 
-        existing_ids = _get_existing_ids(video_dir, "mp4")
+        existing_ids = get_existing_video_ids(video_dir)
         all_ids = _load_video_ids(video_id_file)
         ids = list(all_ids - existing_ids)
 
         if not ids:
             self.logger.info("All videos already downloaded.")
-            return {"total": len(all_ids), "downloaded": 0, "errors": 0}
+            return {
+                "total": len(all_ids), "downloaded": 0,
+                "errors": 0, "missing": [],
+            }
 
         yt_config = {
             "format": source.download_format,
+            "merge_output_format": "mp4",
+            "postprocessors": [
+                {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"},
+            ],
             "writesubtitles": False,
             "outtmpl": os.path.join(video_dir, "%(id)s.%(ext)s"),
             "nocheckcertificate": True,
@@ -227,6 +252,7 @@ class YouTubeASLDataset(DatasetAdapter):
 
         error_count = 0
         downloaded = 0
+        missing: List[Dict] = []
 
         with tqdm(ids, desc="Downloading videos", unit="video") as pbar:
             for video_id in pbar:
@@ -243,13 +269,18 @@ class YouTubeASLDataset(DatasetAdapter):
                     UnavailableVideoError,
                 ) as e:
                     self.logger.error("Error downloading %s: %s", video_id, e)
+                    missing.append({"VIDEO_ID": video_id, "REASON": str(e)})
                     error_count += 1
                 except Exception as e:
                     self.logger.error("Unexpected error for %s: %s", video_id, e)
+                    missing.append({"VIDEO_ID": video_id, "REASON": str(e)})
                     error_count += 1
                 pbar.set_postfix(errors=error_count)
 
-        return {"total": len(all_ids), "downloaded": downloaded, "errors": error_count}
+        return {
+            "total": len(all_ids), "downloaded": downloaded,
+            "errors": error_count, "missing": missing,
+        }
 
     # ------------------------------------------------------------------
     # build_manifest — produce segmented manifest from transcripts
@@ -316,7 +347,18 @@ class YouTubeASLDataset(DatasetAdapter):
         context.manifest_path = Path(manifest_path)
         if os.path.exists(manifest_path):
             from ..utils.manifest import read_manifest
-            context.manifest_df = read_manifest(manifest_path, normalize_columns=True)
+            df = read_manifest(manifest_path, normalize_columns=True)
+
+            # Apply availability policy (web-mined dataset)
+            video_dir = config.paths.videos
+            if video_dir and Path(video_dir).is_dir():
+                df = apply_availability_policy(
+                    df, video_dir, source.availability_policy,
+                )
+                # Re-write manifest with policy applied
+                df.to_csv(manifest_path, sep="\t", index=False)
+
+            context.manifest_df = df
 
         context.stats["manifest"] = {
             "videos": processed_count,

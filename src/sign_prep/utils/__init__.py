@@ -7,6 +7,7 @@ from .manifest import (
     read_manifest,
     validate_manifest,
     has_timing,
+    find_video_file,
     resolve_video_path,
     get_timing_columns,
     REQUIRED_COLUMNS,
@@ -15,6 +16,13 @@ from .manifest import (
     SPATIAL_COLUMNS,
     METADATA_COLUMNS,
     ALL_KNOWN_COLUMNS,
+)
+from .availability import (
+    get_existing_video_ids,
+    apply_availability_policy,
+    filter_available,
+    write_acquire_report,
+    AvailabilityPolicy,
 )
 
 __all__ = [
@@ -27,6 +35,7 @@ __all__ = [
     "read_manifest",
     "validate_manifest",
     "has_timing",
+    "find_video_file",
     "resolve_video_path",
     "get_timing_columns",
     "REQUIRED_COLUMNS",
@@ -35,4 +44,9 @@ __all__ = [
     "SPATIAL_COLUMNS",
     "METADATA_COLUMNS",
     "ALL_KNOWN_COLUMNS",
+    "get_existing_video_ids",
+    "apply_availability_policy",
+    "filter_available",
+    "write_acquire_report",
+    "AvailabilityPolicy",
 ]

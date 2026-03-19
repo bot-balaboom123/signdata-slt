@@ -6,6 +6,7 @@ from typing import Optional, Set
 
 from ..config.schema import Config
 from ..registry import DATASET_REGISTRY, PROCESSOR_REGISTRY
+from ..utils.availability import filter_available
 from ..utils.manifest import read_manifest
 from .checkpoint import (
     check_success,
@@ -141,6 +142,12 @@ class PipelineRunner:
 
             # Update context routing after stage completes
             self._update_routing(step_name, context)
+
+            # Filter AVAILABLE=False rows so downstream processors only
+            # iterate available videos (mark_unavailable policy).
+            if step_name in _MANIFEST_PRODUCING_STAGES and context.manifest_df is not None:
+                context.manifest_df = filter_available(context.manifest_df)
+
             context.completed_steps.append(step_name)
 
             # Write checkpoint marker
@@ -279,6 +286,10 @@ class PipelineRunner:
         routing (manifest_path changes), but manifest_df would be stale.
         This reloads it so downstream stages and activation checks see the
         correct data.
+
+        If the manifest contains an ``AVAILABLE`` column (from
+        ``mark_unavailable`` policy), unavailable rows are filtered out
+        so downstream processors only iterate available videos.
         """
         if step_name not in _MANIFEST_PRODUCING_STAGES:
             return
@@ -286,6 +297,7 @@ class PipelineRunner:
             context.manifest_df = read_manifest(
                 str(context.manifest_path), normalize_columns=True,
             )
+            context.manifest_df = filter_available(context.manifest_df)
 
     def _update_routing(self, step_name: str, context: PipelineContext) -> None:
         """Update context routing fields after a stage completes.
