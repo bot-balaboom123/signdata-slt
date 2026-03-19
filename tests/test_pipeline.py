@@ -193,9 +193,9 @@ class TestShouldRunStageClipVideoTiming:
 # ── Obfuscate guard (P2c) ─────────────────────────────────────────────────
 
 class TestObfuscateGuard:
-    def test_obfuscate_not_registered(self):
-        """obfuscate is in the video recipe but has no registered processor."""
-        assert "obfuscate" not in PROCESSOR_REGISTRY
+    def test_obfuscate_registered(self):
+        """obfuscate processor is registered and in OPTIONAL_STAGES."""
+        assert "obfuscate" in PROCESSOR_REGISTRY
         assert "obfuscate" in OPTIONAL_STAGES
 
     def test_obfuscate_activated_by_stage_config(self):
@@ -206,6 +206,36 @@ class TestObfuscateGuard:
     def test_obfuscate_not_activated_by_default(self):
         cfg = Config(dataset="test")
         assert should_run_stage("obfuscate", cfg) is False
+
+
+# ── Window video activation ────────────────────────────────────────────────
+
+class TestWindowVideoActivation:
+    def test_window_video_registered(self):
+        assert "window_video" in PROCESSOR_REGISTRY
+        assert "window_video" in OPTIONAL_STAGES
+
+    def test_window_video_activated_by_stage_config(self):
+        cfg = Config(
+            dataset="test",
+            stage_config={"window_video": {"window_seconds": 10.0}},
+        )
+        assert should_run_stage("window_video", cfg) is True
+
+    def test_window_video_not_activated_by_default(self):
+        cfg = Config(dataset="test")
+        assert should_run_stage("window_video", cfg) is False
+
+    def test_window_video_in_both_recipes(self):
+        assert "window_video" in RECIPES["pose"]
+        assert "window_video" in RECIPES["video"]
+
+    def test_window_video_before_clip_video_in_recipes(self):
+        for recipe_name, stages in RECIPES.items():
+            if "window_video" in stages and "clip_video" in stages:
+                assert stages.index("window_video") < stages.index("clip_video"), (
+                    f"window_video must precede clip_video in {recipe_name}"
+                )
 
 
 # ── Runner checkpoint integration (P2a) ───────────────────────────────────

@@ -66,6 +66,18 @@ STAGE_HASH_FIELDS: Dict[str, List[str]] = {
         "crop_video.padding",
         "crop_video.codec",
     ],
+    "window_video": [
+        "stage_config.window_video.window_seconds",
+        "stage_config.window_video.stride_seconds",
+        "stage_config.window_video.min_window_seconds",
+        "stage_config.window_video.align_to_captions",
+    ],
+    "obfuscate": [
+        "stage_config.obfuscate.method",
+        "stage_config.obfuscate.blur_strength",
+        "stage_config.obfuscate.pixelate_size",
+        "stage_config.obfuscate.min_detection_confidence",
+    ],
     "extract": [
         "extractor.name",
         # MediaPipe-specific
