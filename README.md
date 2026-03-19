@@ -2,13 +2,13 @@
 # SLTpipe: Data Pipeline for Sign Language Translation
 
 <!-- Animated Header -->
-<img src="https://balaboom123-capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=180&section=header&text=Sign%20Language%20Preprocessing&fontSize=42&fontColor=fff&animation=twinkling&fontAlignY=32&desc=Config-Driven%20Video%20and%20Pose%20Preprocessing&descAlignY=52&descSize=18"/>
+<img src="https://balaboom123-capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=180&section=header&text=SLTpipe&fontSize=42&fontColor=fff&animation=twinkling&fontAlignY=32&desc=Data%20Pipeline%20for%20Sign%20Language%20Translation&descAlignY=52&descSize=18"/>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-10B981?style=flat" alt="License"/></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11+-blue?style=flat" alt="Python 3.11+"/></a>
-  <a href="https://github.com/balaboom123/Sign-Language-Preprocessing/stargazers"><img src="https://img.shields.io/github/stars/balaboom123/Sign-Language-Preprocessing?style=flat&color=F59E0B" alt="Stars"/></a>
-  <a href="https://github.com/balaboom123/Sign-Language-Preprocessing/issues"><img src="https://img.shields.io/github/issues/balaboom123/Sign-Language-Preprocessing?style=flat&color=EF4444" alt="Issues"/></a>
+  <a href="https://github.com/balaboom123/SLTpipe/stargazers"><img src="https://img.shields.io/github/stars/balaboom123/SLTpipe?style=flat&color=F59E0B" alt="Stars"/></a>
+  <a href="https://github.com/balaboom123/SLTpipe/issues"><img src="https://img.shields.io/github/issues/balaboom123/SLTpipe?style=flat&color=EF4444" alt="Issues"/></a>
 </p>
 
 A config-driven, modular pipeline for preprocessing multiple **Sign Language (SL)** datasets.
