@@ -1,15 +1,18 @@
+<!-- H1 -->
+# SignDATA: Data Pipeline for Sign Language Translation
+
 <!-- Animated Header -->
-<img src="https://balaboom123-capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=180&section=header&text=Sign%20Language%20Preprocessing&fontSize=42&fontColor=fff&anmatioin=twinkling&fontAlignY=32&desc=Config-Driven%20ASL%20Dataset%20Preprocessing%20Pipeline&descAlignY=52&descSize=18"/>
+<img src="https://balaboom123-capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=180&section=header&text=SignDATA&fontSize=42&fontColor=fff&animation=twinkling&fontAlignY=32&desc=Config-driven%20Pose/Video%20Preprocessing%20Pipeline&descAlignY=52&descSize=18" alt="SignDATA – Data Pipeline for Sign Language Translation"/>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-10B981?style=flat" alt="License"/></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11+-blue?style=flat" alt="Python 3.11+"/></a>
-  <a href="https://github.com/balaboom123/Sign-Language-Preprocessing/stargazers"><img src="https://img.shields.io/github/stars/balaboom123/Sign-Language-Preprocessing?style=flat&color=F59E0B" alt="Stars"/></a>
-  <a href="https://github.com/balaboom123/Sign-Language-Preprocessing/issues"><img src="https://img.shields.io/github/issues/balaboom123/Sign-Language-Preprocessing?style=flat&color=EF4444" alt="Issues"/></a>
+  <a href="https://github.com/balaboom123/signdata-slt/stargazers"><img src="https://img.shields.io/github/stars/balaboom123/signdata-slt?style=flat&color=F59E0B" alt="Stars"/></a>
+  <a href="https://github.com/balaboom123/signdata-slt/issues"><img src="https://img.shields.io/github/issues/balaboom123/signdata-slt?style=flat&color=EF4444" alt="Issues"/></a>
 </p>
 
-A config-driven, modular pipeline for preprocessing **American Sign Language (ASL)** datasets.
-Supports **YouTube-ASL** and **How2Sign** with two landmark extractors (**MediaPipe Holistic** and **MMPose RTMPose3D**) and two output modes (pose landmarks and video clips).
+A config-driven, modular pipeline for preprocessing multiple **Sign Language (SL)** datasets.
+Supports two landmark extractors (**MediaPipe Holistic** and **MMPose RTMPose3D**) and two output modes (pose landmarks and video clips).
 
 <!-- Quick Links -->
 <div align="center">
@@ -63,8 +66,8 @@ Sharded tar archives for efficient training data loading
 ## Installation
 
 ```bash
-git clone https://github.com/balaboom123/Sign-Language-Preprocessing.git
-cd Sign-Language-Preprocessing
+git clone https://github.com/balaboom123/signdata-slt.git
+cd signdata-slt
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
