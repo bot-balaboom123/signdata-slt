@@ -33,6 +33,10 @@ def _is_absolute(path_str: str) -> bool:
 
 
 PACKAGE_DIR_ALIASES = ("signdata", "sltpipe", "sign_prep")
+RESOURCE_CONFIG_ROOTS = {
+    "pose_model_config": ("resources", "pose_models"),
+    "det_model_config": ("resources", "detection_models"),
+}
 
 
 def _alternate_package_dirs(path: Path) -> List[Path]:
@@ -62,10 +66,49 @@ def _alternate_package_dirs(path: Path) -> List[Path]:
     return []
 
 
-def _resolve_model_path(path_str: str, project_root: Path) -> str:
-    """Resolve model paths relative to project root with rename fallback."""
+def _alternate_resource_model_configs(
+    path: Path, project_root: Path, attr_name: str
+) -> List[Path]:
+    """Return resource-path candidates for legacy model config locations.
+
+    Legacy built-in MMPose configs lived under
+    ``src/<package>/models/configs/*.py``. They now live under ``resources``,
+    split by asset type. When a config still points at the old location, look
+    for a shipped resource file with the same basename in the appropriate
+    resource subtree.
+    """
+    if attr_name not in RESOURCE_CONFIG_ROOTS:
+        return []
+
+    parts = list(path.parts)
+    is_legacy_config_path = any(
+        parts[i] == "src"
+        and parts[i + 1] in PACKAGE_DIR_ALIASES
+        and parts[i + 2] == "models"
+        and parts[i + 3] == "configs"
+        for i in range(len(parts) - 4)
+    )
+    if not is_legacy_config_path:
+        return []
+
+    resource_root = project_root.joinpath(*RESOURCE_CONFIG_ROOTS[attr_name])
+    if not resource_root.exists():
+        return []
+
+    return sorted(
+        candidate
+        for candidate in resource_root.rglob(path.name)
+        if candidate.is_file()
+    )
+
+
+def _resolve_model_path(path_str: str, project_root: Path, attr_name: str) -> str:
+    """Resolve model paths relative to project root with migration fallbacks."""
     resolved = Path(path_str) if _is_absolute(path_str) else project_root / path_str
     alternate_paths = _alternate_package_dirs(resolved)
+    alternate_paths.extend(
+        _alternate_resource_model_configs(resolved, project_root, attr_name)
+    )
 
     if not resolved.exists():
         for alternate in alternate_paths:
@@ -73,6 +116,16 @@ def _resolve_model_path(path_str: str, project_root: Path) -> str:
                 return str(alternate)
 
     return str(resolved)
+
+
+def _find_project_root(config_dir: Path) -> Path:
+    """Resolve the project root for configs at any nesting depth."""
+    cursor = config_dir
+    while cursor != cursor.parent:
+        if cursor.name == "configs":
+            return cursor.parent
+        cursor = cursor.parent
+    return config_dir
 
 
 def resolve_paths(config: Config, project_root: Path) -> Config:
@@ -141,11 +194,17 @@ def resolve_paths(config: Config, project_root: Path) -> Config:
     # Resolve extractor model paths relative to project root.
     # During the package rename, prefer the configured path but fall back to
     # the mirrored legacy/new package path if that is the only existing copy.
+    # Also preserve compatibility for pre-reorg built-in MMPose config paths
+    # that moved from ``src/.../models/configs`` into ``resources/...``.
     for attr in ("pose_model_config", "pose_model_checkpoint",
                  "det_model_config", "det_model_checkpoint"):
         val = getattr(config.extractor, attr)
         if val:
-            setattr(config.extractor, attr, _resolve_model_path(val, project_root))
+            setattr(
+                config.extractor,
+                attr,
+                _resolve_model_path(val, project_root, attr),
+            )
 
     return config
 
@@ -166,12 +225,7 @@ def load_config(
     yaml_path = os.path.abspath(yaml_path)
     config_dir = Path(yaml_path).parent
 
-    # Compute project root: strip configs/ or configs/jobs/ parent
-    project_root = config_dir
-    if project_root.name == "jobs":
-        project_root = project_root.parent
-    if project_root.name == "configs":
-        project_root = project_root.parent
+    project_root = _find_project_root(config_dir)
 
     with open(yaml_path, "r") as f:
         raw = yaml.safe_load(f) or {}

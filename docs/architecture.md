@@ -1,40 +1,44 @@
 # Architecture
 
-## Entry Point
+## Entry Points
 
 ```bash
-python -m signdata <config.yaml> [--override key=value ...]
+python -m signdata run <job.yaml> [--override key=value ...]
+python -m signdata experiment <experiment.yaml>
 ```
 
-`__main__.py` imports all registry modules, loads the YAML config, and hands it to `PipelineRunner`.
+`src/signdata/__main__.py` imports `signdata.datasets`, `signdata.processors`,
+and `signdata.pose` to populate the registries before any config is executed.
 
-## Pipeline Flow
+## Run Flow
 
-```
-YAML config
+```text
+job YAML
   │
   ▼
-load_config()          # merge _base → dataset YAML → CLI overrides
+load_config()          # resolve paths and apply overrides
   │
   ▼
 PipelineRunner(config)
   │  ├─ look up dataset in DATASET_REGISTRY
-  │  └─ build processor chain from pipeline.steps
+  │  ├─ derive stage list from config.recipe
+  │  └─ slice with start_from / stop_at if requested
   │
   ▼
-for each processor:
-  │  processor.validate(context)
-  │  context = processor.run(context)
-  │  context.completed_steps.append(name)
+for each active stage:
+  │  dataset adapter handles acquire / manifest
+  │  registered processor handles other stages
+  │  context routing is updated after each stage
   ▼
 PipelineContext (final)
 ```
 
-`PipelineContext` is a dataclass that carries shared state between steps: the config, dataset instance, project root, manifest path/DataFrame, completed steps, and per-step stats.
+Experiment runs load `configs/experiments/*.yaml`, then execute each referenced
+job under `configs/jobs/...` with its own override set.
 
-## Registry System
+## Registries
 
-Three global registries in `registry.py`, populated via decorators:
+Three global registries live in `src/signdata/registry.py`:
 
 | Decorator | Registry | Base class |
 |---|---|---|
@@ -42,63 +46,51 @@ Three global registries in `registry.py`, populated via decorators:
 | `@register_processor(name)` | `PROCESSOR_REGISTRY` | `BaseProcessor` |
 | `@register_extractor(name)` | `EXTRACTOR_REGISTRY` | `LandmarkExtractor` |
 
-Registration happens at import time. `__main__.py` imports `signdata.datasets`, `signdata.processors`, and `signdata.extractors` to trigger it.
+## Recipes
 
-## Pipeline Modes
+Recipes live in `src/signdata/pipeline/recipes.py`.
 
-**`pose` mode** (landmarks):
-`download → manifest → extract → normalize → webdataset`
-Extracts per-frame pose landmarks as `.npy` arrays, normalizes them, and packages into tar shards.
+- `pose`: `acquire → manifest → detect_person → window_video → clip_video → crop_video → extract → normalize → webdataset`
+- `video`: `acquire → manifest → detect_person → window_video → clip_video → crop_video → obfuscate → webdataset`
 
-**`video` mode** (clips):
-`download → manifest → clip_video → webdataset`
-Clips video segments with ffmpeg and packages `.mp4` files into tar shards.
+Some stages are optional and only run when enabled by config or manifest data.
+Examples:
 
-The `steps` list in config controls exactly which processors run. `start_from` and `stop_at` allow resuming or stopping partway through.
+- `detect_person` requires `detect_person.enabled: true`
+- `crop_video` requires `crop_video.enabled: true`
+- `obfuscate` requires `stage_config.obfuscate`
+- `window_video` requires `stage_config.window_video`
 
-### Data Shape Flow
+## PipelineContext
 
-| Stage | Format | Shape / Notes |
+`PipelineContext` carries shared state between stages:
+
+| Field | Type | Description |
 |---|---|---|
-| `extract` output | `.npy` per segment | `(T, K, 4)` — T frames, K keypoints, 4 channels `[x, y, z, vis]` |
-| `normalize` output | `.npy` per segment | `(T, K'×C)` flattened — K' reduced keypoints, C = 3 (visibility is stripped); C = 2 when `remove_z=true` |
-| `clip_video` output | `.mp4` per segment | raw video clip, optionally resized |
-| `webdataset` output | `.tar` shards | each sample: `.npy`/`.mp4` + `.txt` + `.json` metadata |
+| `config` | `Config` | Full parsed config |
+| `dataset` | `DatasetAdapter` | Active dataset adapter |
+| `project_root` | `Path` | Repository root |
+| `manifest_path` | `Path?` | Current manifest path |
+| `manifest_df` | `DataFrame?` | Loaded manifest |
+| `video_dir` | `Path?` | Current video source directory |
+| `stage_output_dir` | `Path?` | Output directory for the active stage |
+| `completed_steps` | `list[str]` | Completed stage names |
+| `stats` | `dict[str, dict]` | Per-stage counters |
 
-Default keypoint counts (K): MediaPipe refined = **553**, MediaPipe unrefined = **543**, MMPose RTMPose3D = **133**.
-Default after reduction (K'): **85** keypoints for MediaPipe refined and MMPose; **83** for MediaPipe unrefined. Dataset-specific configs may override via `normalize.keypoint_indices`.
+The runner updates routing fields such as `manifest_path` and `video_dir` after
+each stage so downstream stages read the correct artifacts instead of
+hardcoding earlier paths.
 
-## PipelineContext Fields
+## Package Layout
 
-`PipelineContext` is a dataclass that carries all shared state between steps:
-
-| Field | Type | Set by | Description |
-|---|---|---|---|
-| `config` | `Config` | runner | Full parsed config object |
-| `dataset` | `BaseDataset` | runner | Dataset instance (e.g. `YouTubeASL`) |
-| `project_root` | `Path` | runner | Absolute path to repo root |
-| `manifest_path` | `Path?` | `manifest` processor | Path to the manifest CSV |
-| `manifest_df` | `DataFrame?` | `manifest` processor | Loaded manifest as a pandas DataFrame |
-| `completed_steps` | `list[str]` | each processor | Names of processors that have finished |
-| `stats` | `dict[str, dict]` | each processor | Per-step counters (processed, skipped, errors) |
-
-## Processors
-
-Every processor subclasses `BaseProcessor` and implements:
-
-- `run(context) → context` -- execute the step, return updated context
-- `validate(context) → bool` -- optional pre-check (default: `True`)
-
-Processors are stateless between runs. All shared state flows through `PipelineContext`.
-
-## Extensibility
-
-The pipeline is designed to be extended with new datasets, processors, and extractors via the registry decorator pattern. See [CONTRIBUTING.md](../CONTRIBUTING.md) for step-by-step instructions and code examples.
-
----
+- `src/signdata/datasets/` contains dataset adapters.
+- `src/signdata/pose/` contains extractors and MMPose variants.
+- `src/signdata/detection/` contains detector backends.
+- `src/signdata/processors/` contains stage implementations grouped by domain.
+- `resources/` contains shipped model config assets.
 
 ## See Also
 
-- [Configuration Reference](configuration.md) -- full config schema and CLI overrides
-- [Pipeline Stages](pipeline-stages.md) -- detailed per-stage documentation
-- [Datasets](datasets.md) -- dataset-specific setup guides
+- [Configuration Reference](configuration.md) -- config layout and key fields
+- [Pipeline Stages](pipeline-stages.md) -- stage-by-stage behavior
+- [Datasets](datasets.md) -- dataset-specific setup notes

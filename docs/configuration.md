@@ -1,202 +1,232 @@
 # Configuration Reference
 
-## Inheritance & Overrides
+## Job and Experiment Files
 
-Config values are merged in this order (later wins):
-
-1. **Pydantic defaults** -- hardcoded in `config/schema.py`
-2. **Base YAML** -- loaded via the `_base` key (e.g. `_base: _base/pose_mediapipe.yaml`)
-3. **Dataset YAML** -- the file you pass on the command line
-4. **CLI overrides** -- `--override key=value` arguments
+Runnable job YAMLs live under `configs/jobs/<dataset>/`.
+Experiment YAMLs live under `configs/experiments/` and reference job paths relative to `configs/`.
 
 ```bash
-python -m signdata configs/youtube_asl/pose_mediapipe.yaml \
+python -m signdata run configs/jobs/youtube_asl/mediapipe.yaml \
   --override processing.max_workers=8 normalize.remove_z=true
+
+python -m signdata experiment configs/experiments/baseline_youtube_asl.yaml
 ```
 
-### Merge example
+## Merge Order
 
-`_base/pose_mediapipe.yaml` sets:
-```yaml
-processing:
-  max_workers: 4
-  target_fps: 24.0
-```
+Config values are applied in this order, with later values winning:
 
-`configs/youtube_asl/pose_mediapipe.yaml` overrides only what differs:
-```yaml
-_base: _base/pose_mediapipe.yaml
-
-processing:
-  max_workers: 8   # overrides the base value; target_fps: 24.0 is inherited unchanged
-```
+1. Pydantic defaults from `src/signdata/config/schema.py`
+2. Job YAML values
+3. CLI overrides passed to `python -m signdata run`
+4. Per-job `overrides` from an experiment YAML
 
 ## Minimal Working Config
 
-The smallest valid dataset config only needs to specify what differs from the base and Pydantic defaults:
+The smallest practical job config only needs the fields required by the
+dataset adapter and recipe:
 
 ```yaml
-# configs/my_dataset/pose_mediapipe.yaml
-_base: _base/pose_mediapipe.yaml
-
+# configs/jobs/my_dataset/mediapipe.yaml
 dataset: my_dataset
-
-pipeline:
-  steps: [extract, normalize, webdataset]
+recipe: pose
 
 paths:
   root: dataset/my_dataset
   videos: dataset/my_dataset/videos
   manifest: dataset/my_dataset/manifest.csv
+
+extractor:
+  name: mediapipe
 ```
 
-Everything else (extractor settings, normalization mode, worker counts, etc.) is inherited from the base YAML and Pydantic defaults.
+Some dataset adapters also require `source` fields. For example, YouTube-ASL
+needs `source.video_ids_file`.
 
-## Config Files
+## File Layout
 
-```
+```text
 configs/
-├── _base/
-│   ├── pose_mediapipe.yaml     # Base MediaPipe extractor + normalize + processing
-│   ├── pose_mmpose.yaml        # Base MMPose extractor + normalize + processing
-│   └── video.yaml              # Base video-mode settings
-├── youtube_asl/
-│   ├── pose_mediapipe.yaml     # YouTube-ASL + MediaPipe
-│   ├── pose_mmpose.yaml        # YouTube-ASL + MMPose
-│   └── video.yaml              # YouTube-ASL + video clips
-└── how2sign/
-    ├── pose_mediapipe.yaml     # How2Sign + MediaPipe
-    ├── pose_mmpose.yaml        # How2Sign + MMPose
-    └── video.yaml              # How2Sign + video clips
+├── experiments/
+│   ├── baseline_youtube_asl.yaml
+│   └── privacy_aware_slt.yaml
+└── jobs/
+    ├── youtube_asl/
+    │   ├── mediapipe.yaml
+    │   ├── mmpose.yaml
+    │   └── video.yaml
+    └── how2sign/
+        ├── mediapipe.yaml
+        ├── mmpose.yaml
+        └── video.yaml
 ```
 
-## Config Sections
-
-### `pipeline`
+## Top-Level Fields
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `mode` | `"pose"` \| `"video"` | `"pose"` | Output mode: landmarks or video clips |
-| `steps` | `list[str]` | `[]` | Ordered processor names to run |
-| `start_from` | `str?` | `null` | Resume from this step (inclusive) |
-| `stop_at` | `str?` | `null` | Stop after this step (inclusive) |
+| `dataset` | `str` | none | Dataset name registered in `DATASET_REGISTRY` |
+| `recipe` | `"pose"` \| `"video"` | `"pose"` | Recipe that defines legal stage order |
+| `run_name` | `str` | `"default"` | Output namespace under dataset artifacts |
+| `start_from` | `str?` | `null` | Start from this stage |
+| `stop_at` | `str?` | `null` | Stop after this stage |
+| `source` | `dict` | `{}` | Dataset-specific source/acquire/manifest settings |
+| `stage_config` | `dict` | `{}` | Optional per-stage settings keyed by stage name |
 
-### `paths`
+## `paths`
 
-All paths are resolved relative to the project root if not absolute. Defaults are derived from `dataset/{dataset_name}/`.
+All relative paths are resolved from the project root.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `root` | `str` | `""` | Dataset root directory |
-| `videos` | `str` | `""` | Downloaded video files |
+| `videos` | `str` | `""` | Source videos |
 | `transcripts` | `str` | `""` | Transcript JSON files |
-| `manifest` | `str` | `""` | Manifest CSV path |
+| `manifest` | `str` | `""` | Base manifest CSV |
 | `landmarks` | `str` | `""` | Raw extracted landmarks |
 | `normalized` | `str` | `""` | Normalized landmarks |
-| `clips` | `str` | `""` | Clipped video segments |
-| `webdataset` | `str` | `""` | Output tar shards |
+| `clips` | `str` | `""` | Clipped videos |
+| `cropped_clips` | `str` | `""` | Cropped videos |
+| `webdataset` | `str` | `""` | Output shard directory |
 
-### `download`
+## `source`
+
+`source` is dataset-specific. Common keys used by the built-in datasets are:
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `video_ids_file` | `str` | `""` | Path to video ID list file |
+| `video_ids_file` | `str` | `""` | Video ID list for YouTube-style datasets |
 | `languages` | `list[str]` | `["en"]` | Transcript language codes |
-| `format` | `str` | `"worstvideo[height>=720]..."` | yt-dlp format selector |
+| `download_format` | `str` | `"worstvideo[height>=720]..."` | yt-dlp format selector |
 | `rate_limit` | `str` | `"5M"` | Download rate limit |
 | `concurrent_fragments` | `int` | `5` | Parallel download fragments |
+| `max_text_length` | `int` | `300` | Max caption length |
+| `min_duration` | `float` | `0.2` | Min segment duration |
+| `max_duration` | `float` | `60.0` | Max segment duration |
+| `manifest_csv` | `str` | `""` | Existing manifest path for datasets such as How2Sign |
+| `split` | `str` | `"all"` | Split label for datasets such as How2Sign |
 
-### `manifest`
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `max_text_length` | `int` | `300` | Max characters per segment |
-| `min_duration` | `float` | `0.2` | Min segment duration (seconds) |
-| `max_duration` | `float` | `60.0` | Max segment duration (seconds) |
-
-### `extractor`
+## `extractor`
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `name` | `str` | `"mediapipe"` | Extractor name (`mediapipe` or `mmpose`) |
+| `name` | `str` | `"mediapipe"` | Extractor name |
 | `max_workers` | `int` | `4` | Parallel extraction workers |
-| **MediaPipe** | | | |
-| `model_complexity` | `int` | `1` | Model complexity (0, 1, or 2) |
-| `min_detection_confidence` | `float` | `0.5` | Detection confidence threshold |
-| `min_tracking_confidence` | `float` | `0.5` | Tracking confidence threshold |
-| `refine_face_landmarks` | `bool` | `true` | Use 478 face landmarks (vs 468) |
-| **MMPose** | | | |
-| `pose_model_config` | `str` | `""` | RTMPose3D model config path |
-| `pose_model_checkpoint` | `str` | `""` | RTMPose3D checkpoint path |
-| `det_model_config` | `str` | `""` | RTMDet model config path |
-| `det_model_checkpoint` | `str` | `""` | RTMDet checkpoint path |
-| `bbox_threshold` | `float` | `0.5` | Detection bounding-box threshold |
-| `keypoint_threshold` | `float` | `0.3` | Keypoint confidence threshold |
-| `add_visible` | `bool` | `true` | Include visibility as 4th channel |
+| `batch_size` | `int` | `16` | Frames per inference batch |
+| `model_complexity` | `int` | `1` | MediaPipe model complexity |
+| `min_detection_confidence` | `float` | `0.5` | MediaPipe detection threshold |
+| `min_tracking_confidence` | `float` | `0.5` | MediaPipe tracking threshold |
+| `refine_face_landmarks` | `bool` | `true` | Use refined face landmarks |
+| `pose_model_config` | `str` | `""` | MMPose model config path |
+| `pose_model_checkpoint` | `str` | `""` | MMPose checkpoint path |
+| `det_model_config` | `str` | `""` | Detector config path |
+| `det_model_checkpoint` | `str` | `""` | Detector checkpoint path |
+| `bbox_threshold` | `float` | `0.5` | MMPose person-box threshold |
+| `keypoint_threshold` | `float` | `0.3` | MMPose keypoint threshold |
+| `add_visible` | `bool` | `true` | Keep visibility in output |
 | `device` | `str` | `"cuda:0"` | Inference device |
 
-### `normalize`
+## `normalize`
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `mode` | `str` | `"xy_isotropic_z_minmax"` | Normalization mode (`isotropic_3d` or `xy_isotropic_z_minmax`) |
-| `remove_z` | `bool` | `false` | Drop z-coordinate after normalization |
-| `select_keypoints` | `bool` | `true` | Reduce to subset of keypoints |
-| `keypoint_indices` | `list[int]?` | `null` | Custom keypoint indices (auto-detected if null) |
-| `mask_empty_frames` | `bool` | `true` | Mask frames with all-zero landmarks |
-| `mask_low_confidence` | `bool` | `false` | Mask individual low-visibility landmarks |
-| `visibility_threshold` | `float` | `0.3` | Visibility score cutoff |
-| `missing_value` | `float` | `-999.0` | Fill value for masked landmarks |
+| `mode` | `str` | `"xy_isotropic_z_minmax"` | Normalization mode |
+| `remove_z` | `bool` | `false` | Drop z after normalization |
+| `select_keypoints` | `bool` | `true` | Reduce keypoints before flattening |
+| `keypoint_preset` | `str?` | `null` | Named preset from `signdata.presets` |
+| `keypoint_indices` | `list[int]?` | `null` | Explicit keypoint indices |
+| `mask_empty_frames` | `bool` | `true` | Mask all-zero frames |
+| `mask_low_confidence` | `bool` | `false` | Mask low-visibility landmarks |
+| `visibility_threshold` | `float` | `0.3` | Visibility cutoff |
+| `missing_value` | `float` | `-999.0` | Fill value for masked data |
 
-### `processing`
+## `processing`
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `max_workers` | `int` | `4` | Parallel processing workers |
-| `target_fps` | `float?` | `24.0` | Target frame rate for sampling |
+| `max_workers` | `int` | `4` | Generic worker count |
+| `target_fps` | `float?` | `24.0` | Target sampling FPS |
 | `frame_skip` | `int` | `2` | Skip every N frames |
-| `accept_fps_range` | `list[float]?` | `[24.0, 60.0]` | Acceptable source FPS range |
-| `skip_existing` | `bool` | `true` | Skip already-processed files |
-| `min_duration` | `float` | `0.2` | Min segment duration (seconds) |
-| `max_duration` | `float` | `60.0` | Max segment duration (seconds) |
+| `accept_fps_range` | `list[float]?` | `[24.0, 60.0]` | Allowed input FPS range |
+| `skip_existing` | `bool` | `true` | Skip existing outputs |
+| `min_duration` | `float` | `0.2` | Min segment duration during extraction |
+| `max_duration` | `float` | `60.0` | Max segment duration during extraction |
+| `signer_policy` | `str` | `"primary_signer"` | Multi-person handling policy |
 
-### `webdataset`
+## `detect_person`
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | `bool` | `false` | Enable person detection |
+| `model` | `str` | `"yolov8n.pt"` | Detector model id or path |
+| `backend` | `str` | `"ultralytics"` | Detection backend |
+| `confidence_threshold` | `float` | `0.5` | Detection confidence threshold |
+| `sample_strategy` | `str` | `"skip_frame"` | Frame sampling mode |
+| `uniform_frames` | `int` | `5` | Exact frame count for uniform sampling |
+| `max_frames` | `int` | `5` | Max frame count for skip-frame sampling |
+| `device` | `str` | `"cpu"` | Inference device |
+| `min_bbox_area` | `float` | `0.05` | Minimum normalized bbox area |
+
+## `crop_video`
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | `bool` | `false` | Enable crop stage |
+| `padding` | `float` | `0.25` | Padding around detected bbox |
+| `codec` | `str` | `"libx264"` | ffmpeg codec for cropped clips |
+
+## `clip_video`
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `codec` | `str` | `"copy"` | ffmpeg codec for clipped videos |
+| `resize` | `list[int]?` | `null` | Optional `[width, height]` resize |
+
+## `webdataset`
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `max_shard_count` | `int` | `10000` | Max samples per shard |
-| `max_shard_size` | `int?` | `null` | Max bytes per shard (optional) |
+| `max_shard_size` | `int?` | `null` | Max shard size in bytes |
 
-### `clip_video`
+## `stage_config`
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `codec` | `str` | `"copy"` | ffmpeg codec (`copy` for fast, `libx264` for re-encode) |
-| `resize` | `list[int]?` | `null` | Optional `[width, height]` rescale |
+`stage_config` holds settings for optional stages such as `obfuscate` and
+`window_video`.
 
-## CLI Override Examples
+```yaml
+stage_config:
+  obfuscate:
+    method: blur
+
+  window_video:
+    window_seconds: 10.0
+    stride_seconds: 5.0
+    min_window_seconds: 2.0
+```
+
+## CLI Examples
 
 ```bash
 # Change number of workers
---override processing.max_workers=8
+python -m signdata run configs/jobs/youtube_asl/mediapipe.yaml \
+  --override processing.max_workers=8
 
 # Switch extractor
---override extractor.name=mmpose
+python -m signdata run configs/jobs/youtube_asl/mediapipe.yaml \
+  --override extractor.name=mmpose
 
-# Disable z-coordinate removal
---override normalize.remove_z=false
+# Run only part of the recipe
+python -m signdata run configs/jobs/youtube_asl/mediapipe.yaml \
+  --from extract --to normalize
 
-# Run only extraction and normalization
---override pipeline.start_from=extract pipeline.stop_at=normalize
-
-# Use a specific GPU
---override extractor.device=cuda:1
+# Override run name for isolated outputs
+python -m signdata run configs/jobs/youtube_asl/video.yaml \
+  --run-name privacy_v1
 ```
-
----
 
 ## See Also
 
-- [Architecture](architecture.md) -- system design, registry, pipeline flow
-- [Pipeline Stages](pipeline-stages.md) -- what each stage does and its I/O
-- [Installation Guide](installation.md) -- base setup and MMPose dependencies
+- [Architecture](architecture.md) -- runner, registry, and recipes
+- [Pipeline Stages](pipeline-stages.md) -- stage behavior and outputs
+- [Installation Guide](installation.md) -- environment setup and MMPose dependencies

@@ -5,7 +5,7 @@ from typing import Dict, Type, TYPE_CHECKING
 if TYPE_CHECKING:
     from .datasets.base import BaseDataset
     from .processors.base import BaseProcessor
-    from .extractors.base import LandmarkExtractor
+    from .pose.base import LandmarkExtractor
 
 DATASET_REGISTRY: Dict[str, Type["BaseDataset"]] = {}
 PROCESSOR_REGISTRY: Dict[str, Type["BaseProcessor"]] = {}

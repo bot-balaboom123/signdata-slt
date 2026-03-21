@@ -7,12 +7,12 @@ description: >
 
 jobs:
   # Standard video packaging (detection + cropping, no obfuscation)
-  - config: jobs/youtube_asl_video.yaml
+  - config: jobs/youtube_asl/video.yaml
     overrides:
       run_name: standard_v1
 
   # Privacy-preserving packaging (detection + cropping + face blur)
-  - config: jobs/youtube_asl_video.yaml
+  - config: jobs/youtube_asl/video.yaml
     overrides:
       run_name: privacy_v1
       stage_config.obfuscate.method: blur

@@ -6,7 +6,7 @@ import sys
 # Ensure registrations happen on import
 import signdata.datasets  # noqa: F401
 import signdata.processors  # noqa: F401
-import signdata.extractors  # noqa: F401
+import signdata.pose  # noqa: F401
 
 from signdata.cli import parse_args
 from signdata.config import load_config

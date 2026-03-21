@@ -34,6 +34,8 @@ export PYTHONPATH="/path/to/mmpose:$PYTHONPATH"
 ### 3. Download model checkpoints
 
 ```bash
+mkdir -p src/signdata/models/checkpoints
+
 wget -P src/signdata/models/checkpoints/ \
   https://download.openmmlab.com/mmpose/v1/wholebody_3d_keypoint/rtmw3d/rtmw3d-l_8xb64_cocktail14-384x288-794dbc78_20240626.pth
 

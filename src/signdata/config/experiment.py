@@ -8,11 +8,11 @@ Example experiment YAML::
 
     name: "YouTube-ASL Baseline Reproduction"
     jobs:
-      - config: jobs/youtube_asl_pose_mediapipe.yaml
+      - config: jobs/youtube_asl/mediapipe.yaml
         overrides:
           processing.target_fps: null
           normalize.mask_landmark_level: true
-      - config: jobs/youtube_asl_pose_mmpose.yaml
+      - config: jobs/youtube_asl/mmpose.yaml
         overrides:
           extractor.device: "cuda:1"
 """
@@ -78,10 +78,8 @@ def load_experiment(yaml_path: str) -> ExperimentConfig:
     """Load an experiment config from YAML.
 
     Job config paths are resolved relative to the nearest ``configs/``
-    ancestor directory.  This handles any nesting depth (e.g.
-    ``configs/experiments/baselines/foo.yaml``).  If no ``configs/``
-    ancestor exists, paths resolve relative to the experiment file's
-    directory.
+    ancestor directory. If no ``configs/`` ancestor exists, paths
+    resolve relative to the experiment file's directory.
 
     Args:
         yaml_path: Path to the experiment YAML file.
@@ -95,9 +93,8 @@ def load_experiment(yaml_path: str) -> ExperimentConfig:
     # Determine configs root for resolving job config paths.
     # Walk up from experiment_dir to find a ``configs/`` ancestor.
     # This handles any nesting depth under configs/:
-    #   configs/experiments/foo.yaml              → configs/
-    #   configs/experiments/baselines/foo.yaml    → configs/
-    #   configs/experiments/a/b/c/foo.yaml        → configs/
+    #   configs/experiments/foo.yaml           → configs/
+    #   configs/experiments/a/b/c/foo.yaml     → configs/
     # If no ``configs/`` ancestor exists, fall back to experiment_dir.
     configs_root = experiment_dir
     cursor = experiment_dir

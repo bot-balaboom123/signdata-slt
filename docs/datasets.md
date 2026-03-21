@@ -7,10 +7,10 @@ A large-scale, open-domain ASL-English parallel corpus with 11,000+ YouTube vide
 **Full pipeline:** `download → manifest → extract → normalize → webdataset`
 
 ```bash
-python -m signdata configs/youtube_asl/pose_mediapipe.yaml
+python -m signdata run configs/jobs/youtube_asl/mediapipe.yaml
 ```
 
-Requires `download.video_ids_file` pointing to the video ID list (included at `assets/youtube-asl_youtube_asl_video_ids.txt`). The download step fetches videos via yt-dlp and transcripts via `youtube-transcript-api`.
+Requires `source.video_ids_file` pointing to the video ID list (included at `assets/youtube-asl_youtube_asl_video_ids.txt`). The acquire stage fetches videos via yt-dlp and transcripts via `youtube-transcript-api`.
 
 ## How2Sign
 
@@ -19,13 +19,13 @@ Requires `download.video_ids_file` pointing to the video ID list (included at `a
 **Pipeline:** `extract → normalize → webdataset` for the standard pose configs
 
 ```bash
-python -m signdata configs/how2sign/pose_mediapipe.yaml
+python -m signdata run configs/jobs/how2sign/mediapipe.yaml
 ```
 
 **Setup:**
 1. Download the dataset from [how2sign.github.io](https://how2sign.github.io/)
 2. Place videos in the `videos` path (default: `dataset/how2sign/videos/`)
-3. Place the alignment CSV (e.g. `how2sign_realigned_val.csv`) at the `manifest` path
+3. Place the alignment CSV (e.g. `how2sign_realigned_val.csv`) at `paths.manifest` or `source.manifest_csv`
 
 The How2Sign dataset class rejects `download` steps. Experiment configs may still
 include `manifest` when they reuse an existing alignment CSV and do not rely on

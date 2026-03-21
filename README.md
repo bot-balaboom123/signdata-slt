@@ -34,7 +34,7 @@ Supports two landmark extractors (**MediaPipe Holistic** and **MMPose RTMPose3D*
 <td width="50%">
 
 ### 📝 Config-Driven
-YAML configs with base inheritance and CLI overrides
+YAML job configs, experiment configs, and CLI overrides
 
 ### 🦴 Two Extractors
 MediaPipe Holistic (553 keypoints) and MMPose RTMPose3D (133 keypoints)
@@ -83,14 +83,14 @@ MediaPipe works on CPU out of the box. MMPose requires a CUDA-capable GPU and ad
 
 ```bash
 # Download YouTube-ASL videos, extract MediaPipe landmarks, normalize, and package into WebDataset shards
-python -m signdata configs/youtube_asl/pose_mediapipe.yaml
+python -m signdata run configs/jobs/youtube_asl/mediapipe.yaml
 
 # Extract MMPose landmarks from pre-downloaded How2Sign data (CUDA required)
-python -m signdata configs/how2sign/pose_mmpose.yaml
+python -m signdata run configs/jobs/how2sign/mmpose.yaml
 
 # Override any config value from the command line (e.g. more workers, stop after extraction)
-python -m signdata configs/youtube_asl/pose_mediapipe.yaml \
-  --override processing.max_workers=8 pipeline.stop_at=extract
+python -m signdata run configs/jobs/youtube_asl/mediapipe.yaml \
+  --override processing.max_workers=8 stop_at=extract
 ```
 
 ---
@@ -116,8 +116,8 @@ For paper-aligned preprocessing methodology, see [Research-Aligned Preprocessing
 
 - [Installation Guide](docs/installation.md) -- base setup and MMPose GPU dependencies
 - [Architecture](docs/architecture.md) -- system design, registry, pipeline flow
-- [Configuration](docs/configuration.md) -- full config reference, inheritance, CLI overrides
-- [Pipeline Stages](docs/pipeline-stages.md) -- all 6 processing stages
+- [Configuration](docs/configuration.md) -- job/experiment layout and CLI overrides
+- [Pipeline Stages](docs/pipeline-stages.md) -- recipe stages and optional stages
 - [Datasets](docs/datasets.md) -- YouTube-ASL vs How2Sign setup
 - [Research-Aligned Preprocessing](docs/research-preprocessing.md) -- paper-aligned preprocessing notes
 

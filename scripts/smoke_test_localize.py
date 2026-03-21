@@ -88,9 +88,9 @@ def run_smoke_test(video_path: str, device: str, padding: float, max_frames: int
     from signdata.config.schema import Config
     from signdata.pipeline.context import PipelineContext
     from signdata.datasets.youtube_asl import YouTubeASLDataset
-    from signdata.processors.detect_person import DetectPersonProcessor
-    from signdata.processors.clip_video import ClipVideoProcessor
-    from signdata.processors.crop_video import CropVideoProcessor
+    from signdata.processors.detection.detect_person import DetectPersonProcessor
+    from signdata.processors.video.clip import ClipVideoProcessor
+    from signdata.processors.video.crop import CropVideoProcessor
 
     video_path = os.path.abspath(video_path)
     if not os.path.exists(video_path):

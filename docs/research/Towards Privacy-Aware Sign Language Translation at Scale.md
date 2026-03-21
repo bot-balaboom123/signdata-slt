@@ -66,7 +66,7 @@ The closest mapping in this repo is to use the `video` pipeline mode and prepare
 
 The experiment config is:
 
-- [`configs/exp/privacy_aware_slt_video.yaml`](../../configs/exp/privacy_aware_slt_video.yaml)
+- [`configs/experiments/privacy_aware_slt.yaml`](../../configs/experiments/privacy_aware_slt.yaml)
 
 This config intentionally does the following:
 
