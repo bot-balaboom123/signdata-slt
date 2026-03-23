@@ -7,8 +7,9 @@ python -m signdata run <job.yaml> [--override key=value ...]
 python -m signdata experiment <experiment.yaml>
 ```
 
-`src/signdata/__main__.py` imports `signdata.datasets`, `signdata.processors`,
-and `signdata.pose` to populate the registries before any config is executed.
+`src/signdata/__main__.py` imports `signdata.datasets`,
+`signdata.processors`, and the pose backend subpackages to populate the
+registries before any config is executed.
 
 ## Run Flow
 

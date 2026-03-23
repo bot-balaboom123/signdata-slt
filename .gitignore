@@ -183,3 +183,5 @@ acquire_report/
 *.tmp
 .DS_Store
 
+/resources/detection_models/rtmdet/checkpoints/
+/resources/pose_models/mmpose/checkpoints/

@@ -133,7 +133,7 @@ All relative paths are resolved from the project root.
 | `mode` | `str` | `"xy_isotropic_z_minmax"` | Normalization mode |
 | `remove_z` | `bool` | `false` | Drop z after normalization |
 | `select_keypoints` | `bool` | `true` | Reduce keypoints before flattening |
-| `keypoint_preset` | `str?` | `null` | Named preset from `signdata.presets` |
+| `keypoint_preset` | `str?` | `null` | Named preset from `signdata.pose.presets` |
 | `keypoint_indices` | `list[int]?` | `null` | Explicit keypoint indices |
 | `mask_empty_frames` | `bool` | `true` | Mask all-zero frames |
 | `mask_low_confidence` | `bool` | `false` | Mask low-visibility landmarks |

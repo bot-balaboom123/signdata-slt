@@ -39,7 +39,7 @@ class NormalizeConfig(BaseModel):
     @classmethod
     def validate_keypoint_preset(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
-            from signdata.presets import KEYPOINT_PRESETS
+            from signdata.pose.presets import KEYPOINT_PRESETS
             if v not in KEYPOINT_PRESETS:
                 raise ValueError(
                     f"Unknown keypoint preset '{v}'. "

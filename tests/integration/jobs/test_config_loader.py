@@ -336,6 +336,34 @@ class TestResolvePaths:
         assert cfg.extractor.pose_model_config == str(pose_resource)
         assert cfg.extractor.det_model_config == str(det_resource)
 
+    def test_resource_checkpoint_paths_fall_back_to_legacy_checkpoint_dir(self, tmp_path):
+        cfg = Config(
+            dataset="test",
+            extractor={
+                "name": "mmpose",
+                "pose_model_checkpoint": (
+                    "resources/pose_models/mmpose/checkpoints/model.pth"
+                ),
+                "det_model_checkpoint": (
+                    "resources/detection_models/rtmdet/checkpoints/det.pth"
+                ),
+            },
+        )
+        legacy_pose = (
+            tmp_path / "src" / "signdata" / "models" / "checkpoints" / "model.pth"
+        )
+        legacy_det = (
+            tmp_path / "src" / "signdata" / "models" / "checkpoints" / "det.pth"
+        )
+        legacy_pose.parent.mkdir(parents=True, exist_ok=True)
+        legacy_pose.touch()
+        legacy_det.touch()
+
+        cfg = resolve_paths(cfg, tmp_path)
+
+        assert cfg.extractor.pose_model_checkpoint == str(legacy_pose)
+        assert cfg.extractor.det_model_checkpoint == str(legacy_det)
+
     def test_cropped_clips_default_resolved(self):
         """cropped_clips defaults to <root>/cropped_clips/<run_name> when not set."""
         cfg = Config(dataset="test")

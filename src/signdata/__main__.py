@@ -6,7 +6,8 @@ import sys
 # Ensure registrations happen on import
 import signdata.datasets  # noqa: F401
 import signdata.processors  # noqa: F401
-import signdata.pose  # noqa: F401
+import signdata.pose.mediapipe  # noqa: F401
+import signdata.pose.mmpose  # noqa: F401
 
 from signdata.cli import parse_args
 from signdata.config import load_config
@@ -34,7 +35,7 @@ def main():
     if args.command == "run":
         # Handle --list-presets early exit (no config file needed)
         if args.list_presets:
-            from signdata.presets import list_presets
+            from signdata.pose.presets import list_presets
             for name, desc in sorted(list_presets().items()):
                 print(f"  {name:30s} {desc}")
             return

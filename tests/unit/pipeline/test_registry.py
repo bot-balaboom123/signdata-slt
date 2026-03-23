@@ -69,7 +69,8 @@ class TestRealRegistrations:
         assert len(PROCESSOR_REGISTRY) >= 6
 
     def test_extractors_registered(self):
-        import signdata.pose  # noqa: F401
+        import signdata.pose.mediapipe  # noqa: F401
+        import signdata.pose.mmpose  # noqa: F401
 
         assert "mediapipe" in EXTRACTOR_REGISTRY
         assert "mmpose" in EXTRACTOR_REGISTRY

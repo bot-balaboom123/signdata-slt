@@ -1,8 +1,8 @@
-"""Tests for signdata.presets — keypoint reduction presets."""
+"""Tests for signdata.pose.presets — keypoint reduction presets."""
 
 import pytest
 
-from signdata.presets import (
+from signdata.pose.presets import (
     KEYPOINT_PRESETS,
     list_presets,
     resolve_keypoint_indices,

@@ -9,7 +9,7 @@ import numpy as np
 from tqdm import tqdm
 
 from ..base import BaseProcessor
-from ...presets import resolve_keypoint_indices
+from ...pose.presets import resolve_keypoint_indices
 from ...registry import register_processor
 
 

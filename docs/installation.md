@@ -34,16 +34,19 @@ export PYTHONPATH="/path/to/mmpose:$PYTHONPATH"
 ### 3. Download model checkpoints
 
 ```bash
-mkdir -p src/signdata/models/checkpoints
+mkdir -p resources/pose_models/mmpose/checkpoints
+mkdir -p resources/detection_models/rtmdet/checkpoints
 
-wget -P src/signdata/models/checkpoints/ \
+wget -P resources/pose_models/mmpose/checkpoints/ \
   https://download.openmmlab.com/mmpose/v1/wholebody_3d_keypoint/rtmw3d/rtmw3d-l_8xb64_cocktail14-384x288-794dbc78_20240626.pth
 
-wget -P src/signdata/models/checkpoints/ \
+wget -P resources/detection_models/rtmdet/checkpoints/ \
   https://download.openmmlab.com/mmpose/v1/projects/rtmpose/rtmdet_nano_8xb32-100e_coco-obj365-person-05d8511e.pth
 ```
 
-These checkpoints are used by the RTMPose3D whole-body estimator and the RTMDet person detector respectively.
+These checkpoints are used by the RTMPose3D whole-body estimator and the RTMDet
+person detector respectively. The default MMPose job configs in this repo point
+to these `resources/.../checkpoints/` locations.
 
 ### 4. Verify installation
 

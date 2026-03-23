@@ -37,6 +37,7 @@ RESOURCE_CONFIG_ROOTS = {
     "pose_model_config": ("resources", "pose_models"),
     "det_model_config": ("resources", "detection_models"),
 }
+RESOURCE_CHECKPOINT_ATTRS = {"pose_model_checkpoint", "det_model_checkpoint"}
 
 
 def _alternate_package_dirs(path: Path) -> List[Path]:
@@ -102,12 +103,46 @@ def _alternate_resource_model_configs(
     )
 
 
+def _alternate_legacy_model_checkpoints(
+    path: Path, project_root: Path, attr_name: str
+) -> List[Path]:
+    """Return legacy checkpoint candidates for resource-path checkpoint refs.
+
+    Built-in MMPose job YAMLs now reference shipped checkpoint locations under
+    ``resources/.../checkpoints``. Older docs/configs used
+    ``src/<package>/models/checkpoints/*.pth`` instead. When the new resource
+    path is configured but the file is still present only in the old location,
+    fall back to the legacy checkpoint path so users do not need to move or
+    re-download weights.
+    """
+    if attr_name not in RESOURCE_CHECKPOINT_ATTRS:
+        return []
+
+    parts = list(path.parts)
+    is_resource_checkpoint_path = any(
+        parts[i] == "resources"
+        and parts[i + 1] in {"pose_models", "detection_models"}
+        and parts[i + 3] == "checkpoints"
+        for i in range(len(parts) - 4)
+    )
+    if not is_resource_checkpoint_path:
+        return []
+
+    return [
+        project_root / "src" / package_dir / "models" / "checkpoints" / path.name
+        for package_dir in PACKAGE_DIR_ALIASES
+    ]
+
+
 def _resolve_model_path(path_str: str, project_root: Path, attr_name: str) -> str:
     """Resolve model paths relative to project root with migration fallbacks."""
     resolved = Path(path_str) if _is_absolute(path_str) else project_root / path_str
     alternate_paths = _alternate_package_dirs(resolved)
     alternate_paths.extend(
         _alternate_resource_model_configs(resolved, project_root, attr_name)
+    )
+    alternate_paths.extend(
+        _alternate_legacy_model_checkpoints(resolved, project_root, attr_name)
     )
 
     if not resolved.exists():
