@@ -209,7 +209,7 @@ class ObfuscateProcessor(BaseProcessor):
         data = read_manifest(str(context.manifest_path), normalize_columns=True)
 
         # Determine file naming based on upstream producer
-        clipped = getattr(context, 'video_dir_producer', None) in ("clip_video", "crop_video")
+        clipped = getattr(context, 'video_dir_producer', None) == "clip_video"
         id_col = "SAMPLE_ID" if clipped else "VIDEO_ID"
 
         tasks = []

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .base import BaseProcessor
 from .detection import create_detector, single_person_check, union_bboxes
-from .video.processing import FfmpegSamplingParams, ffmpeg_pipe_frames, clip_and_crop
+from .video.ffmpeg import FfmpegSamplingParams, ffmpeg_pipe_frames, clip_and_crop
 from ..registry import register_processor
 from ..utils.manifest import get_timing_columns, resolve_video_path
 

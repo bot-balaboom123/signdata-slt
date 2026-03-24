@@ -1,27 +1,24 @@
 # Pipeline Stages
 
-Stage order is recipe-driven. The runner starts from `config.recipe` and then
-applies `start_from` / `stop_at` if present.
+The pipeline runner dispatches to the processor specified by
+`config.processing.processor`. Supported processors:
 
-- `pose` recipe: `acquire → manifest → detect_person → window_video → clip_video → crop_video → extract → normalize → webdataset`
-- `video` recipe: `acquire → manifest → detect_person → window_video → clip_video → crop_video → obfuscate → webdataset`
+- `video2pose` — video → pose landmarks (.npy)
+- `video2crop` — video → cropped video (.mp4)
 
-Optional stages only run when enabled by config or manifest data.
+Additional registered stages (`clip_video`, `window_video`, `obfuscate`) can be
+used standalone but are not part of the main processing dispatch.
 
 ## Stage Summary
 
-| Stage | Recipe(s) | Output | Activation |
-|---|---|---|---|
-| `acquire` | both | videos and transcripts, or validation of local data | always |
-| `manifest` | both | base manifest CSV | always |
-| `detect_person` | both | derived manifest with `BBOX_*` columns | `detect_person.enabled: true` |
-| `window_video` | both | derived manifest with windowed rows | `stage_config.window_video` |
-| `clip_video` | both | sentence or window clips in `paths.clips` | manifest has timing |
-| `crop_video` | both | cropped clips in `paths.cropped_clips` | `crop_video.enabled: true` |
-| `extract` | pose | landmark arrays in `paths.landmarks` | always in pose recipe |
-| `normalize` | pose | normalized arrays in `paths.normalized` | always in pose recipe |
-| `obfuscate` | video | obfuscated videos in `{root}/obfuscated/{run_name}` | `stage_config.obfuscate` |
-| `webdataset` | both | shards in `paths.webdataset` | always |
+| Stage | Output | Activation |
+|---|---|---|
+| `acquire` | videos and transcripts, or validation of local data | always |
+| `manifest` | base manifest CSV | always |
+| `window_video` | derived manifest with windowed rows | `stage_config.window_video` |
+| `clip_video` | sentence or window clips in `paths.clips` | manifest has timing |
+| `obfuscate` | obfuscated videos in `{root}/obfuscated/{run_name}` | `stage_config.obfuscate` |
+| `webdataset` | shards in `paths.webdataset` | always |
 
 ## `acquire`
 
@@ -52,19 +49,6 @@ Key config paths:
 - `source.max_duration`
 - `paths.manifest`
 
-## `detect_person`
-
-Runs person detection on sampled frames and writes a derived manifest at:
-
-```text
-{paths.root}/detect_person/{run_name}/manifest.csv
-```
-
-New manifest columns:
-
-- `BBOX_X1`, `BBOX_Y1`, `BBOX_X2`, `BBOX_Y2`
-- `PERSON_DETECTED`
-
 ## `window_video`
 
 Creates a metadata-only derived manifest at:
@@ -88,54 +72,6 @@ Key config paths:
 
 - `clip_video.codec`
 - `clip_video.resize`
-
-## `crop_video`
-
-Reads clips plus `BBOX_*` columns from the current manifest and writes cropped
-clips into:
-
-```text
-{paths.cropped_clips}/{sample_id}.mp4
-```
-
-Key config paths:
-
-- `crop_video.enabled`
-- `crop_video.padding`
-- `crop_video.codec`
-
-## `extract`
-
-Reads source videos or clips from the current routed `video_dir` and writes
-landmarks into:
-
-```text
-{paths.landmarks}/{sample_id}.npy
-```
-
-Key config paths:
-
-- `extractor.name`
-- `extractor.pose_model_config`
-- `extractor.det_model_config`
-- `processing.target_fps`
-- `processing.frame_skip`
-
-## `normalize`
-
-Reads landmark arrays from `paths.landmarks` and writes normalized arrays into:
-
-```text
-{paths.normalized}/{sample_id}.npy
-```
-
-Key config paths:
-
-- `normalize.keypoint_preset`
-- `normalize.keypoint_indices`
-- `normalize.mode`
-- `normalize.remove_z`
-- `normalize.missing_value`
 
 ## `obfuscate`
 
@@ -161,6 +97,6 @@ Packages the current manifest plus the active artifact directory into shards:
 
 ## See Also
 
-- [Architecture](architecture.md) -- runner, recipes, and routing
+- [Architecture](architecture.md) -- runner and routing
 - [Configuration Reference](configuration.md) -- config layout and fields
 - [Datasets](datasets.md) -- dataset-specific setup

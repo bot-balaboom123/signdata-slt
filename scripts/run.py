@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Convenience wrapper for running the signdata pipeline.
-
-To smoke-test detect_person + crop_video on a single video without a full
-dataset, use the standalone helper:
-
-    python scripts/smoke_test_localize.py --video path/to/video.mp4
-"""
+"""Convenience wrapper for running the signdata pipeline."""
 
 import sys
 import os

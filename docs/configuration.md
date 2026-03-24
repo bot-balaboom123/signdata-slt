@@ -85,8 +85,7 @@ All relative paths are resolved from the project root.
 | `manifest` | `str` | `""` | Base manifest CSV |
 | `landmarks` | `str` | `""` | Raw extracted landmarks |
 | `normalized` | `str` | `""` | Normalized landmarks |
-| `clips` | `str` | `""` | Clipped videos |
-| `cropped_clips` | `str` | `""` | Cropped videos |
+| `clips` | `str` | `""` | Clipped videos (used by `clip_video`) |
 | `webdataset` | `str` | `""` | Output shard directory |
 
 ## `source`
@@ -152,28 +151,6 @@ All relative paths are resolved from the project root.
 | `min_duration` | `float` | `0.2` | Min segment duration during extraction |
 | `max_duration` | `float` | `60.0` | Max segment duration during extraction |
 | `signer_policy` | `str` | `"primary_signer"` | Multi-person handling policy |
-
-## `detect_person`
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | `bool` | `false` | Enable person detection |
-| `model` | `str` | `"yolov8n.pt"` | Detector model id or path |
-| `backend` | `str` | `"ultralytics"` | Detection backend |
-| `confidence_threshold` | `float` | `0.5` | Detection confidence threshold |
-| `sample_strategy` | `str` | `"skip_frame"` | Frame sampling mode |
-| `uniform_frames` | `int` | `5` | Exact frame count for uniform sampling |
-| `max_frames` | `int` | `5` | Max frame count for skip-frame sampling |
-| `device` | `str` | `"cpu"` | Inference device |
-| `min_bbox_area` | `float` | `0.05` | Minimum normalized bbox area |
-
-## `crop_video`
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | `bool` | `false` | Enable crop stage |
-| `padding` | `float` | `0.25` | Padding around detected bbox |
-| `codec` | `str` | `"libx264"` | ffmpeg codec for cropped clips |
 
 ## `clip_video`
 

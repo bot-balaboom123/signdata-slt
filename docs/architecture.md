@@ -47,18 +47,19 @@ Three global registries live in `src/signdata/registry.py`:
 | `@register_processor(name)` | `PROCESSOR_REGISTRY` | `BaseProcessor` |
 | `@register_extractor(name)` | `EXTRACTOR_REGISTRY` | `LandmarkExtractor` |
 
-## Recipes
+## Processing
 
-Recipes live in `src/signdata/pipeline/recipes.py`.
+The pipeline runner dispatches to the processor specified by
+`config.processing.processor`:
 
-- `pose`: `acquire → manifest → detect_person → window_video → clip_video → crop_video → extract → normalize → webdataset`
-- `video`: `acquire → manifest → detect_person → window_video → clip_video → crop_video → obfuscate → webdataset`
+- `video2pose` — video → pose landmarks (.npy), using detection + pose backends
+- `video2crop` — video → cropped video (.mp4), using detection + ffmpeg
 
-Some stages are optional and only run when enabled by config or manifest data.
-Examples:
+Additional registered stages (`clip_video`, `window_video`, `obfuscate`) can be
+used standalone but are not part of the main processing dispatch.
 
-- `detect_person` requires `detect_person.enabled: true`
-- `crop_video` requires `crop_video.enabled: true`
+Optional stages only run when enabled by config:
+
 - `obfuscate` requires `stage_config.obfuscate`
 - `window_video` requires `stage_config.window_video`
 
