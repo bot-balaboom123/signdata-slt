@@ -29,18 +29,6 @@ class TestParseArgs:
         args = parse_args(["run", "/path/to/configs/test.yaml"])
         assert args.config == "/path/to/configs/test.yaml"
 
-    def test_run_from_flag(self):
-        args = parse_args(["run", "job.yaml", "--from", "extract"])
-        assert args.start_from == "extract"
-
-    def test_run_to_flag(self):
-        args = parse_args(["run", "job.yaml", "--to", "normalize"])
-        assert args.stop_at == "normalize"
-
-    def test_run_only_flag(self):
-        args = parse_args(["run", "job.yaml", "--only", "extract"])
-        assert args.only == "extract"
-
     def test_run_name_flag(self):
         args = parse_args(["run", "job.yaml", "--run-name", "exp1"])
         assert args.run_name == "exp1"
@@ -62,7 +50,3 @@ class TestParseArgs:
         args = parse_args(["run", "--list-presets"])
         assert args.list_presets is True
         assert args.config is None
-
-    def test_force_flag(self):
-        args = parse_args(["run", "job.yaml", "--force", "extract"])
-        assert args.force == "extract"

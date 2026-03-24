@@ -183,10 +183,9 @@ class TestWindowVideoProcessorWithTiming:
         return PipelineContext(
             config=cfg,
             dataset=YouTubeASLDataset(),
-            project_root=tmp_path,
             manifest_path=manifest_path,
-            video_dir=tmp_path / "videos",
-            stage_output_dir=tmp_path / "window_video" / "default",
+            videos_dir=tmp_path / "videos",
+            output_dir=tmp_path / "window_video" / "default",
         )
 
     def test_run_with_timing_manifest(self, tmp_path):
@@ -203,14 +202,8 @@ class TestWindowVideoProcessorWithTiming:
         df.to_csv(manifest_path, sep="\t", index=False)
 
         cfg = Config(
-            dataset="youtube_asl",
-            source={"video_ids_file": "/tmp/ids.txt"},
+            dataset={"name": "youtube_asl"},
             paths={"root": str(tmp_path)},
-            stage_config={"window_video": {
-                "window_seconds": 10.0,
-                "stride_seconds": 5.0,
-                "min_window_seconds": 2.0,
-            }},
         )
 
         processor = WindowVideoProcessor(cfg)
@@ -261,18 +254,12 @@ class TestWindowVideoProcessorWithTiming:
         (tmp_path / "videos").mkdir()
 
         cfg = Config(
-            dataset="youtube_asl",
-            source={"video_ids_file": "/tmp/ids.txt"},
+            dataset={"name": "youtube_asl"},
             paths={"root": str(tmp_path), "videos": str(tmp_path / "videos")},
-            stage_config={"window_video": {
-                "window_seconds": 10.0,
-                "stride_seconds": 10.0,
-                "min_window_seconds": 2.0,
-            }},
         )
         processor = WindowVideoProcessor(cfg)
         ctx = self._make_context(cfg, manifest_path, tmp_path)
-        ctx.video_dir = tmp_path / "videos"
+        ctx.videos_dir = tmp_path / "videos"
 
         # Mock duration to 30s (longer than caption span 5-20)
         with patch(
@@ -282,12 +269,13 @@ class TestWindowVideoProcessorWithTiming:
             ctx = processor.run(ctx)
 
         result = ctx.manifest_df
-        # Should window [0,30), not [5,20): [0,10), [10,20), [20,30) = 3 windows
-        assert len(result) == 3
+        # Default stride=5s, window=10s over [0,30):
+        # [0,10), [5,15), [10,20), [15,25), [20,30), [25,30) = 6 windows
+        assert len(result) == 6
         assert result.iloc[0]["START"] == 0.0
         assert result.iloc[0]["END"] == 10.0
-        assert result.iloc[2]["START"] == 20.0
-        assert result.iloc[2]["END"] == 30.0
+        assert result.iloc[-1]["START"] == 25.0
+        assert result.iloc[-1]["END"] == 30.0
 
     def test_timed_manifest_falls_back_to_max_end(self, tmp_path):
         """When video is unreadable, timed manifest falls back to max(END)."""
@@ -301,34 +289,28 @@ class TestWindowVideoProcessorWithTiming:
         df.to_csv(manifest_path, sep="\t", index=False)
 
         cfg = Config(
-            dataset="youtube_asl",
-            source={"video_ids_file": "/tmp/ids.txt"},
+            dataset={"name": "youtube_asl"},
             paths={"root": str(tmp_path)},
-            stage_config={"window_video": {
-                "window_seconds": 10.0,
-                "stride_seconds": 10.0,
-                "min_window_seconds": 2.0,
-            }},
         )
         processor = WindowVideoProcessor(cfg)
         ctx = PipelineContext(
             config=cfg,
             dataset=YouTubeASLDataset(),
-            project_root=tmp_path,
             manifest_path=manifest_path,
-            video_dir=None,
-            stage_output_dir=tmp_path / "window_video" / "default",
+            videos_dir=None,
+            output_dir=tmp_path / "window_video" / "default",
         )
 
         ctx = processor.run(ctx)
 
         result = ctx.manifest_df
-        # Falls back to max(END)=20.0, start=0.0: [0,10), [10,20) = 2 windows
-        assert len(result) == 2
+        # Falls back to max(END)=20.0, start=0.0, default stride=5s:
+        # [0,10), [5,15), [10,20), [15,20) = 4 windows
+        assert len(result) == 4
         assert result.iloc[0]["START"] == 0.0
         assert result.iloc[0]["END"] == 10.0
-        assert result.iloc[1]["START"] == 10.0
-        assert result.iloc[1]["END"] == 20.0
+        assert result.iloc[-1]["START"] == 15.0
+        assert result.iloc[-1]["END"] == 20.0
 
     def test_label_columns_dropped(self, tmp_path):
         """TEXT, GLOSS, CLASS_ID should not appear in windowed manifest."""
@@ -345,10 +327,8 @@ class TestWindowVideoProcessorWithTiming:
         df.to_csv(manifest_path, sep="\t", index=False)
 
         cfg = Config(
-            dataset="youtube_asl",
-            source={"video_ids_file": "/tmp/ids.txt"},
+            dataset={"name": "youtube_asl"},
             paths={"root": str(tmp_path)},
-            stage_config={"window_video": {"window_seconds": 10.0}},
         )
         processor = WindowVideoProcessor(cfg)
         ctx = self._make_context(cfg, manifest_path, tmp_path)
@@ -382,27 +362,20 @@ class TestWindowVideoProcessorNoTiming:
         (tmp_path / "videos").mkdir()
 
         cfg = Config(
-            dataset="youtube_asl",
-            source={"video_ids_file": "/tmp/ids.txt"},
+            dataset={"name": "youtube_asl"},
             paths={
                 "root": str(tmp_path),
                 "videos": str(tmp_path / "videos"),
             },
-            stage_config={"window_video": {
-                "window_seconds": 10.0,
-                "stride_seconds": 10.0,
-                "min_window_seconds": 2.0,
-            }},
         )
         processor = WindowVideoProcessor(cfg)
 
         ctx = PipelineContext(
             config=cfg,
             dataset=YouTubeASLDataset(),
-            project_root=tmp_path,
             manifest_path=manifest_path,
-            video_dir=tmp_path / "videos",
-            stage_output_dir=tmp_path / "window_video" / "default",
+            videos_dir=tmp_path / "videos",
+            output_dir=tmp_path / "window_video" / "default",
         )
 
         # Mock _get_video_duration to return known durations
@@ -415,13 +388,13 @@ class TestWindowVideoProcessorNoTiming:
         result = ctx.manifest_df
         assert result is not None
 
-        # vid_a (25s): [0,10), [10,20), [20,25) → 3 windows (last=5s >= 2s min)
+        # vid_a (25s), default stride=5s: [0,10),[5,15),[10,20),[15,25),[20,25) → 5 windows
         vid_a_windows = result[result["VIDEO_ID"] == "vid_a"]
-        assert len(vid_a_windows) == 3
+        assert len(vid_a_windows) == 5
 
-        # vid_b (15s): [0,10), [10,15) → 2 windows (last=5s >= 2s min)
+        # vid_b (15s), default stride=5s: [0,10),[5,15),[10,15) → 3 windows
         vid_b_windows = result[result["VIDEO_ID"] == "vid_b"]
-        assert len(vid_b_windows) == 2
+        assert len(vid_b_windows) == 3
 
     def test_raises_when_all_videos_unreadable(self, tmp_path):
         """When no windows can be generated, processor raises RuntimeError."""
@@ -435,23 +408,20 @@ class TestWindowVideoProcessorNoTiming:
         (tmp_path / "videos").mkdir()
 
         cfg = Config(
-            dataset="youtube_asl",
-            source={"video_ids_file": "/tmp/ids.txt"},
+            dataset={"name": "youtube_asl"},
             paths={
                 "root": str(tmp_path),
                 "videos": str(tmp_path / "videos"),
             },
-            stage_config={"window_video": {"window_seconds": 10.0}},
         )
         processor = WindowVideoProcessor(cfg)
 
         ctx = PipelineContext(
             config=cfg,
             dataset=YouTubeASLDataset(),
-            project_root=tmp_path,
             manifest_path=manifest_path,
-            video_dir=tmp_path / "videos",
-            stage_output_dir=tmp_path / "window_video" / "default",
+            videos_dir=tmp_path / "videos",
+            output_dir=tmp_path / "window_video" / "default",
         )
 
         with patch(
@@ -469,16 +439,13 @@ class TestWindowVideoProcessorNoTiming:
 class TestWindowVideoValidateInputs:
     def test_raises_when_manifest_missing(self, tmp_path):
         cfg = Config(
-            dataset="youtube_asl",
-            source={"video_ids_file": "/tmp/ids.txt"},
+            dataset={"name": "youtube_asl"},
             paths={"root": str(tmp_path)},
-            stage_config={"window_video": {}},
         )
         processor = WindowVideoProcessor(cfg)
         ctx = PipelineContext(
             config=cfg,
             dataset=YouTubeASLDataset(),
-            project_root=tmp_path,
             manifest_path=tmp_path / "nonexistent.csv",
         )
         with pytest.raises(RuntimeError, match="manifest not found"):
@@ -493,18 +460,15 @@ class TestWindowVideoValidateInputs:
         }).to_csv(manifest_path, sep="\t", index=False)
 
         cfg = Config(
-            dataset="youtube_asl",
-            source={"video_ids_file": "/tmp/ids.txt"},
+            dataset={"name": "youtube_asl"},
             paths={"root": str(tmp_path)},
-            stage_config={"window_video": {}},
         )
         processor = WindowVideoProcessor(cfg)
         ctx = PipelineContext(
             config=cfg,
             dataset=YouTubeASLDataset(),
-            project_root=tmp_path,
             manifest_path=manifest_path,
-            video_dir=tmp_path / "nonexistent_videos",
+            videos_dir=tmp_path / "nonexistent_videos",
         )
         with pytest.raises(RuntimeError, match="video directory"):
             processor.validate_inputs(ctx)
@@ -520,18 +484,15 @@ class TestWindowVideoValidateInputs:
         }).to_csv(manifest_path, sep="\t", index=False)
 
         cfg = Config(
-            dataset="youtube_asl",
-            source={"video_ids_file": "/tmp/ids.txt"},
+            dataset={"name": "youtube_asl"},
             paths={"root": str(tmp_path)},
-            stage_config={"window_video": {}},
         )
         processor = WindowVideoProcessor(cfg)
         ctx = PipelineContext(
             config=cfg,
             dataset=YouTubeASLDataset(),
-            project_root=tmp_path,
             manifest_path=manifest_path,
-            video_dir=tmp_path / "nonexistent_videos",
+            videos_dir=tmp_path / "nonexistent_videos",
         )
         # Should NOT raise — timed manifests can fall back to max(END)
         processor.validate_inputs(ctx)

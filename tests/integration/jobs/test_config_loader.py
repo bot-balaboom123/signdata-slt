@@ -117,7 +117,7 @@ class TestSetNested:
 
 class TestResolvePaths:
     def test_empty_paths_get_defaults(self):
-        cfg = Config(dataset="youtube_asl")
+        cfg = Config(dataset={"name": "youtube_asl"})
         project_root = Path("/proj")
         cfg = resolve_paths(cfg, project_root)
 
@@ -129,9 +129,18 @@ class TestResolvePaths:
             project_root / "dataset" / "youtube_asl" / "transcripts"
         )
 
+    def test_output_and_webdataset_defaults(self):
+        cfg = Config(dataset={"name": "test"})
+        project_root = Path("/proj")
+        cfg = resolve_paths(cfg, project_root)
+
+        expected_root = project_root / "dataset" / "test"
+        assert cfg.paths.output == str(expected_root / "output")
+        assert cfg.paths.webdataset == str(expected_root / "webdataset")
+
     def test_relative_paths_resolve(self):
         cfg = Config(
-            dataset="test",
+            dataset={"name": "test"},
             paths={"root": "data/test", "videos": "data/test/vids"},
         )
         project_root = Path("/proj")
@@ -142,319 +151,129 @@ class TestResolvePaths:
 
     def test_absolute_paths_unchanged(self):
         cfg = Config(
-            dataset="test",
+            dataset={"name": "test"},
             paths={"root": "/abs/root", "videos": "/abs/videos"},
         )
         project_root = Path("/proj")
         cfg = resolve_paths(cfg, project_root)
 
-        # Use as_posix() to normalise separators across Linux and Windows
         assert Path(cfg.paths.root).as_posix() == "/abs/root"
         assert Path(cfg.paths.videos).as_posix() == "/abs/videos"
 
     def test_video_ids_file_relative_resolved(self):
-        """source.video_ids_file is resolved relative to project root."""
+        """dataset.source.video_ids_file is resolved relative to project root."""
         cfg = Config(
-            dataset="test",
-            source={"video_ids_file": "assets/ids.txt"},
+            dataset={
+                "name": "test",
+                "source": {"video_ids_file": "assets/ids.txt"},
+            },
         )
         project_root = Path("/proj")
         cfg = resolve_paths(cfg, project_root)
-        assert cfg.source["video_ids_file"] == str(project_root / "assets" / "ids.txt")
+        assert cfg.dataset.source["video_ids_file"] == str(
+            project_root / "assets" / "ids.txt"
+        )
 
     def test_video_ids_file_absolute_unchanged(self):
         cfg = Config(
-            dataset="test",
-            source={"video_ids_file": "/abs/ids.txt"},
+            dataset={
+                "name": "test",
+                "source": {"video_ids_file": "/abs/ids.txt"},
+            },
         )
         project_root = Path("/proj")
         cfg = resolve_paths(cfg, project_root)
-        assert Path(cfg.source["video_ids_file"]).as_posix() == "/abs/ids.txt"
+        assert Path(cfg.dataset.source["video_ids_file"]).as_posix() == "/abs/ids.txt"
 
     def test_video_ids_file_empty_unchanged(self):
-        cfg = Config(dataset="test")
+        cfg = Config(dataset={"name": "test"})
         project_root = Path("/proj")
         cfg = resolve_paths(cfg, project_root)
-        assert cfg.source.get("video_ids_file", "") == ""
+        assert cfg.dataset.source.get("video_ids_file", "") == ""
 
-    def test_webdataset_path_includes_recipe_and_extractor(self):
+    def test_detection_model_paths_resolved(self):
+        """processing.detection_config model paths resolve relative to project root."""
         cfg = Config(
-            dataset="test",
-            recipe="pose",
-            extractor={"name": "mediapipe"},
+            dataset={"name": "test"},
+            processing={
+                "enabled": True,
+                "processor": "video2pose",
+                "detection": "mmdet",
+                "pose": "mmpose",
+                "detection_config": {
+                    "det_model_config": "resources/detection_models/rtmdet/configs/det.py",
+                    "det_model_checkpoint": "resources/detection_models/rtmdet/checkpoints/det.pth",
+                },
+                "pose_config": {
+                    "pose_model_config": "resources/pose_models/mmpose/configs/model.py",
+                    "pose_model_checkpoint": "resources/pose_models/mmpose/checkpoints/model.pth",
+                },
+            },
         )
         project_root = Path("/proj")
         cfg = resolve_paths(cfg, project_root)
+        assert cfg.processing.detection_config.det_model_config == str(
+            project_root / "resources/detection_models/rtmdet/configs/det.py"
+        )
+        assert cfg.processing.pose_config.pose_model_config == str(
+            project_root / "resources/pose_models/mmpose/configs/model.py"
+        )
 
+    def test_detection_model_paths_absolute_unchanged(self):
+        cfg = Config(
+            dataset={"name": "test"},
+            processing={
+                "enabled": True,
+                "processor": "video2pose",
+                "detection": "mmdet",
+                "pose": "mmpose",
+                "detection_config": {
+                    "det_model_config": "/abs/det.py",
+                    "det_model_checkpoint": "/abs/det.pth",
+                },
+                "pose_config": {
+                    "pose_model_config": "/abs/model.py",
+                    "pose_model_checkpoint": "/abs/model.pth",
+                },
+            },
+        )
+        project_root = Path("/proj")
+        cfg = resolve_paths(cfg, project_root)
+        assert Path(cfg.processing.detection_config.det_model_config).as_posix() == "/abs/det.py"
+        assert Path(cfg.processing.pose_config.pose_model_config).as_posix() == "/abs/model.py"
+
+    def test_run_name_not_in_static_paths(self):
+        """run_name is NOT embedded in paths by resolve_paths.
+        Run isolation is handled by PipelineContext.resolve_paths() at runtime."""
+        cfg = Config(dataset={"name": "test"}, run_name="exp1")
+        project_root = Path("/proj")
+        cfg = resolve_paths(cfg, project_root)
+        # paths.output is the template, not scoped by run_name
         expected_root = project_root / "dataset" / "test"
-        assert cfg.paths.webdataset == str(
-            expected_root / "webdataset" / "pose" / "mediapipe" / "default"
-        )
-
-    def test_extractor_model_paths_resolved(self):
-        """Extractor model paths are resolved relative to project root."""
-        cfg = Config(
-            dataset="test",
-            extractor={
-                "name": "mmpose",
-                "pose_model_config": "src/signdata/models/configs/model.py",
-                "pose_model_checkpoint": "src/signdata/models/checkpoints/model.pth",
-                "det_model_config": "src/signdata/models/configs/det.py",
-                "det_model_checkpoint": "src/signdata/models/checkpoints/det.pth",
-            },
-        )
-        project_root = Path("/proj")
-        cfg = resolve_paths(cfg, project_root)
-        assert cfg.extractor.pose_model_config == str(
-            project_root / "src/signdata/models/configs/model.py"
-        )
-        assert cfg.extractor.det_model_checkpoint == str(
-            project_root / "src/signdata/models/checkpoints/det.pth"
-        )
-
-    def test_extractor_model_paths_absolute_unchanged(self):
-        cfg = Config(
-            dataset="test",
-            extractor={
-                "name": "mmpose",
-                "pose_model_config": "/abs/model.py",
-            },
-        )
-        project_root = Path("/proj")
-        cfg = resolve_paths(cfg, project_root)
-        assert Path(cfg.extractor.pose_model_config).as_posix() == "/abs/model.py"
-
-    def test_extractor_checkpoint_paths_fall_back_to_legacy_package_dir(self, tmp_path):
-        cfg = Config(
-            dataset="test",
-            extractor={
-                "name": "mmpose",
-                "pose_model_checkpoint": "src/signdata/models/checkpoints/model.pth",
-                "det_model_checkpoint": "src/signdata/models/checkpoints/det.pth",
-            },
-        )
-        legacy_pose = tmp_path / "src" / "sign_prep" / "models" / "checkpoints" / "model.pth"
-        legacy_det = tmp_path / "src" / "sign_prep" / "models" / "checkpoints" / "det.pth"
-        legacy_pose.parent.mkdir(parents=True, exist_ok=True)
-        legacy_pose.touch()
-        legacy_det.touch()
-
-        cfg = resolve_paths(cfg, tmp_path)
-
-        assert cfg.extractor.pose_model_checkpoint == str(legacy_pose)
-        assert cfg.extractor.det_model_checkpoint == str(legacy_det)
-
-    def test_extractor_checkpoint_paths_fall_back_to_intermediate_package_dir(self, tmp_path):
-        cfg = Config(
-            dataset="test",
-            extractor={
-                "name": "mmpose",
-                "pose_model_checkpoint": "src/signdata/models/checkpoints/model.pth",
-                "det_model_checkpoint": "src/signdata/models/checkpoints/det.pth",
-            },
-        )
-        intermediate_pose = tmp_path / "src" / "sltpipe" / "models" / "checkpoints" / "model.pth"
-        intermediate_det = tmp_path / "src" / "sltpipe" / "models" / "checkpoints" / "det.pth"
-        intermediate_pose.parent.mkdir(parents=True, exist_ok=True)
-        intermediate_pose.touch()
-        intermediate_det.touch()
-
-        cfg = resolve_paths(cfg, tmp_path)
-
-        assert cfg.extractor.pose_model_checkpoint == str(intermediate_pose)
-        assert cfg.extractor.det_model_checkpoint == str(intermediate_det)
-
-    def test_extractor_model_paths_prefer_configured_package_dir(self, tmp_path):
-        cfg = Config(
-            dataset="test",
-            extractor={
-                "name": "mmpose",
-                "pose_model_config": "src/sign_prep/models/configs/model.py",
-                "pose_model_checkpoint": "src/signdata/models/checkpoints/model.pth",
-            },
-        )
-        new_checkpoint = tmp_path / "src" / "signdata" / "models" / "checkpoints" / "model.pth"
-        legacy_config = tmp_path / "src" / "sign_prep" / "models" / "configs" / "model.py"
-        new_checkpoint.parent.mkdir(parents=True, exist_ok=True)
-        legacy_config.parent.mkdir(parents=True, exist_ok=True)
-        new_checkpoint.touch()
-        legacy_config.touch()
-
-        cfg = resolve_paths(cfg, tmp_path)
-
-        assert cfg.extractor.pose_model_config == str(legacy_config)
-        assert cfg.extractor.pose_model_checkpoint == str(new_checkpoint)
-
-    def test_extractor_model_paths_fall_forward_from_intermediate_package_dir(self, tmp_path):
-        cfg = Config(
-            dataset="test",
-            extractor={
-                "name": "mmpose",
-                "pose_model_config": "src/sltpipe/models/configs/model.py",
-            },
-        )
-        canonical_config = tmp_path / "src" / "signdata" / "models" / "configs" / "model.py"
-        canonical_config.parent.mkdir(parents=True, exist_ok=True)
-        canonical_config.touch()
-
-        cfg = resolve_paths(cfg, tmp_path)
-
-        assert cfg.extractor.pose_model_config == str(canonical_config)
-
-    def test_extractor_model_paths_fall_forward_to_resources(self, tmp_path):
-        cfg = Config(
-            dataset="test",
-            extractor={
-                "name": "mmpose",
-                "pose_model_config": "src/signdata/models/configs/model.py",
-                "det_model_config": "src/sign_prep/models/configs/det.py",
-            },
-        )
-        pose_resource = (
-            tmp_path
-            / "resources"
-            / "pose_models"
-            / "mmpose"
-            / "configs"
-            / "model.py"
-        )
-        det_resource = (
-            tmp_path
-            / "resources"
-            / "detection_models"
-            / "rtmdet"
-            / "configs"
-            / "det.py"
-        )
-        pose_resource.parent.mkdir(parents=True, exist_ok=True)
-        det_resource.parent.mkdir(parents=True, exist_ok=True)
-        pose_resource.touch()
-        det_resource.touch()
-
-        cfg = resolve_paths(cfg, tmp_path)
-
-        assert cfg.extractor.pose_model_config == str(pose_resource)
-        assert cfg.extractor.det_model_config == str(det_resource)
-
-    def test_resource_checkpoint_paths_fall_back_to_legacy_checkpoint_dir(self, tmp_path):
-        cfg = Config(
-            dataset="test",
-            extractor={
-                "name": "mmpose",
-                "pose_model_checkpoint": (
-                    "resources/pose_models/mmpose/checkpoints/model.pth"
-                ),
-                "det_model_checkpoint": (
-                    "resources/detection_models/rtmdet/checkpoints/det.pth"
-                ),
-            },
-        )
-        legacy_pose = (
-            tmp_path / "src" / "signdata" / "models" / "checkpoints" / "model.pth"
-        )
-        legacy_det = (
-            tmp_path / "src" / "signdata" / "models" / "checkpoints" / "det.pth"
-        )
-        legacy_pose.parent.mkdir(parents=True, exist_ok=True)
-        legacy_pose.touch()
-        legacy_det.touch()
-
-        cfg = resolve_paths(cfg, tmp_path)
-
-        assert cfg.extractor.pose_model_checkpoint == str(legacy_pose)
-        assert cfg.extractor.det_model_checkpoint == str(legacy_det)
-
-    def test_cropped_clips_default_resolved(self):
-        """cropped_clips defaults to <root>/cropped_clips/<run_name> when not set."""
-        cfg = Config(dataset="test")
-        project_root = Path("/proj")
-        cfg = resolve_paths(cfg, project_root)
-
-        expected_root = project_root / "dataset" / "test"
-        assert cfg.paths.cropped_clips == str(expected_root / "cropped_clips" / "default")
-
-    def test_cropped_clips_relative_resolved(self):
-        """Relative cropped_clips path is resolved against project root."""
-        cfg = Config(
-            dataset="test",
-            paths={"cropped_clips": "data/cropped"},
-        )
-        project_root = Path("/proj")
-        cfg = resolve_paths(cfg, project_root)
-        assert cfg.paths.cropped_clips == str(project_root / "data" / "cropped")
-
-    def test_cropped_clips_absolute_unchanged(self):
-        """Absolute cropped_clips path is left as-is."""
-        cfg = Config(
-            dataset="test",
-            paths={"cropped_clips": "/abs/cropped"},
-        )
-        project_root = Path("/proj")
-        cfg = resolve_paths(cfg, project_root)
-        assert Path(cfg.paths.cropped_clips).as_posix() == "/abs/cropped"
-
-    def test_run_name_in_landmarks_path(self):
-        """landmarks default includes run_name."""
-        cfg = Config(dataset="test", run_name="exp1")
-        project_root = Path("/proj")
-        cfg = resolve_paths(cfg, project_root)
-        expected_root = project_root / "dataset" / "test"
-        assert cfg.paths.landmarks == str(
-            expected_root / "landmarks" / "mediapipe" / "exp1"
-        )
-
-    def test_run_name_in_clips_path(self):
-        """clips default includes run_name."""
-        cfg = Config(dataset="test", run_name="exp1")
-        project_root = Path("/proj")
-        cfg = resolve_paths(cfg, project_root)
-        expected_root = project_root / "dataset" / "test"
-        assert cfg.paths.clips == str(expected_root / "clips" / "exp1")
+        assert cfg.paths.output == str(expected_root / "output")
 
 
 # ── load_config ─────────────────────────────────────────────────────────────
 
 class TestLoadConfig:
-    """Load real YAML files from configs/jobs/ directory."""
-
-    def test_load_youtube_asl_pose_mediapipe(self, project_root):
-        # Trigger registrations
-        import signdata.datasets
-        import signdata.processors
-
-        yaml_path = str(project_root / "configs" / "jobs" / "youtube_asl" / "mediapipe.yaml")
-        if not os.path.exists(yaml_path):
-            pytest.skip("Config file not found")
-
-        cfg = load_config(yaml_path)
-        assert cfg.dataset == "youtube_asl"
-        assert cfg.recipe == "pose"
-        assert cfg.extractor.name == "mediapipe"
-
-    def test_load_how2sign_pose_mediapipe(self, project_root):
-        import signdata.datasets
-        import signdata.processors
-
-        yaml_path = str(project_root / "configs" / "jobs" / "how2sign" / "mediapipe.yaml")
-        if not os.path.exists(yaml_path):
-            pytest.skip("Config file not found")
-
-        cfg = load_config(yaml_path)
-        assert cfg.dataset == "how2sign"
-        assert cfg.recipe == "pose"
+    """Load real YAML files from configs/datasets/ directory."""
 
     def test_load_youtube_asl_pose_mmpose(self, project_root):
         import signdata.datasets
         import signdata.processors
 
-        yaml_path = str(project_root / "configs" / "jobs" / "youtube_asl" / "mmpose.yaml")
+        yaml_path = str(
+            project_root / "configs" / "datasets" / "youtube_asl" / "pose_mmpose.yaml"
+        )
         if not os.path.exists(yaml_path):
             pytest.skip("Config file not found")
 
         cfg = load_config(yaml_path)
-        assert cfg.dataset == "youtube_asl"
-        assert cfg.extractor.name == "mmpose"
-        assert cfg.extractor.pose_model_config == str(
+        assert cfg.dataset.name == "youtube_asl"
+        assert cfg.processing.processor == "video2pose"
+        assert cfg.processing.pose == "mmpose"
+        assert cfg.processing.detection == "mmdet"
+        assert cfg.processing.pose_config.pose_model_config == str(
             project_root
             / "resources"
             / "pose_models"
@@ -462,7 +281,7 @@ class TestLoadConfig:
             / "configs"
             / "rtmw3d-l_8xb64_cocktail14-384x288.py"
         )
-        assert cfg.extractor.det_model_config == str(
+        assert cfg.processing.detection_config.det_model_config == str(
             project_root
             / "resources"
             / "detection_models"
@@ -471,45 +290,43 @@ class TestLoadConfig:
             / "rtmdet_nano_320-8xb32_coco-person.py"
         )
 
-    def test_load_youtube_asl_pose_mmpose_legacy_config_overrides(self, project_root):
+    def test_load_how2sign_pose_mediapipe(self, project_root):
         import signdata.datasets
         import signdata.processors
 
-        yaml_path = str(project_root / "configs" / "jobs" / "youtube_asl" / "mmpose.yaml")
+        yaml_path = str(
+            project_root / "configs" / "datasets" / "how2sign" / "pose_mediapipe.yaml"
+        )
         if not os.path.exists(yaml_path):
             pytest.skip("Config file not found")
 
-        cfg = load_config(
-            yaml_path,
-            overrides=[
-                "extractor.pose_model_config="
-                "src/signdata/models/configs/rtmw3d-l_8xb64_cocktail14-384x288.py",
-                "extractor.det_model_config="
-                "src/signdata/models/configs/rtmdet_nano_320-8xb32_coco-person.py",
-            ],
+        cfg = load_config(yaml_path)
+        assert cfg.dataset.name == "how2sign"
+        assert cfg.processing.processor == "video2pose"
+        assert cfg.processing.pose == "mediapipe"
+
+    def test_load_youtube_asl_video_yolo(self, project_root):
+        import signdata.datasets
+        import signdata.processors
+
+        yaml_path = str(
+            project_root / "configs" / "datasets" / "youtube_asl" / "video_yolo.yaml"
         )
-        assert cfg.extractor.pose_model_config == str(
-            project_root
-            / "resources"
-            / "pose_models"
-            / "mmpose"
-            / "configs"
-            / "rtmw3d-l_8xb64_cocktail14-384x288.py"
-        )
-        assert cfg.extractor.det_model_config == str(
-            project_root
-            / "resources"
-            / "detection_models"
-            / "rtmdet"
-            / "configs"
-            / "rtmdet_nano_320-8xb32_coco-person.py"
-        )
+        if not os.path.exists(yaml_path):
+            pytest.skip("Config file not found")
+
+        cfg = load_config(yaml_path)
+        assert cfg.dataset.name == "youtube_asl"
+        assert cfg.processing.processor == "video2crop"
+        assert cfg.processing.detection == "yolo"
 
     def test_cli_overrides_apply(self, project_root):
         import signdata.datasets
         import signdata.processors
 
-        yaml_path = str(project_root / "configs" / "jobs" / "youtube_asl" / "mediapipe.yaml")
+        yaml_path = str(
+            project_root / "configs" / "datasets" / "how2sign" / "pose_mediapipe.yaml"
+        )
         if not os.path.exists(yaml_path):
             pytest.skip("Config file not found")
 
@@ -519,22 +336,35 @@ class TestLoadConfig:
     def test_missing_dataset_raises(self, tmp_path):
         yaml_path = tmp_path / "bad.yaml"
         yaml_path.write_text(yaml.dump({
-            "recipe": "pose",
+            "processing": {"enabled": False},
         }))
         with pytest.raises(ValueError, match="dataset"):
             load_config(str(yaml_path))
 
-    def test_missing_recipe_raises(self, tmp_path):
-        """Config without recipe raises ValueError."""
+    def test_shorthand_dataset_string(self, tmp_path):
+        """dataset: 'name' shorthand is expanded to dataset: {name: 'name'}."""
         import signdata.datasets
-        import signdata.processors
 
-        configs_dir = tmp_path / "configs" / "jobs"
+        configs_dir = tmp_path / "configs" / "datasets"
         configs_dir.mkdir(parents=True)
         yaml_path = configs_dir / "test.yaml"
         yaml_path.write_text(yaml.dump({
             "dataset": "youtube_asl",
-            "source": {"video_ids_file": "assets/ids.txt"},
         }))
-        with pytest.raises(ValueError, match="recipe"):
+        # Create assets for validation
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir(exist_ok=True)
+
+        # youtube_asl validate_config requires video_ids_file — should raise
+        with pytest.raises(ValueError, match="video_ids_file"):
+            load_config(str(yaml_path))
+
+    def test_unknown_dataset_raises(self, tmp_path):
+        configs_dir = tmp_path / "configs" / "datasets"
+        configs_dir.mkdir(parents=True)
+        yaml_path = configs_dir / "test.yaml"
+        yaml_path.write_text(yaml.dump({
+            "dataset": {"name": "nonexistent_dataset"},
+        }))
+        with pytest.raises(ValueError, match="Unknown dataset"):
             load_config(str(yaml_path))

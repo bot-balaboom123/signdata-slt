@@ -149,15 +149,15 @@ class TestObfuscateSingleVideo:
 
 class TestObfuscateProcessorRun:
     def _make_context(self, cfg, manifest_path, tmp_path, video_dir_producer="clip_video"):
-        return PipelineContext(
+        ctx = PipelineContext(
             config=cfg,
             dataset=YouTubeASLDataset(),
-            project_root=tmp_path,
             manifest_path=manifest_path,
-            video_dir=tmp_path / "clips",
-            video_dir_producer=video_dir_producer,
-            stage_output_dir=tmp_path / "obfuscated" / "default",
+            videos_dir=tmp_path / "clips",
+            output_dir=tmp_path / "obfuscated" / "default",
         )
+        ctx.video_dir_producer = video_dir_producer
+        return ctx
 
     def test_uses_sample_id_when_clipped(self, tmp_path):
         """After clip_video, files are named SAMPLE_ID.mp4."""
@@ -174,10 +174,8 @@ class TestObfuscateProcessorRun:
         (clips_dir / "vid_a-1.mp4").touch()
 
         cfg = Config(
-            dataset="youtube_asl",
-            source={"video_ids_file": "/tmp/ids.txt"},
+            dataset={"name": "youtube_asl"},
             paths={"root": str(tmp_path)},
-            stage_config={"obfuscate": {"method": "blur"}},
         )
         processor = ObfuscateProcessor(cfg)
         ctx = self._make_context(cfg, manifest_path, tmp_path)
@@ -210,10 +208,8 @@ class TestObfuscateProcessorRun:
         (clips_dir / "vid_a.mp4").touch()
 
         cfg = Config(
-            dataset="youtube_asl",
-            source={"video_ids_file": "/tmp/ids.txt"},
+            dataset={"name": "youtube_asl"},
             paths={"root": str(tmp_path)},
-            stage_config={"obfuscate": {"method": "blur"}},
         )
         processor = ObfuscateProcessor(cfg)
         ctx = self._make_context(
@@ -252,10 +248,8 @@ class TestObfuscateProcessorRun:
         (output_dir / "_SUCCESS.json").write_text('{"stage": "obfuscate"}')
 
         cfg = Config(
-            dataset="youtube_asl",
-            source={"video_ids_file": "/tmp/ids.txt"},
+            dataset={"name": "youtube_asl"},
             paths={"root": str(tmp_path)},
-            stage_config={"obfuscate": {"method": "blur"}},
         )
         processor = ObfuscateProcessor(cfg)
         ctx = self._make_context(cfg, manifest_path, tmp_path)
@@ -290,10 +284,8 @@ class TestObfuscateProcessorRun:
         # No actual video files
 
         cfg = Config(
-            dataset="youtube_asl",
-            source={"video_ids_file": "/tmp/ids.txt"},
+            dataset={"name": "youtube_asl"},
             paths={"root": str(tmp_path)},
-            stage_config={"obfuscate": {"method": "blur"}},
         )
         processor = ObfuscateProcessor(cfg)
         ctx = self._make_context(cfg, manifest_path, tmp_path)
@@ -309,36 +301,30 @@ class TestObfuscateProcessorRun:
 class TestObfuscateValidateInputs:
     def test_raises_when_no_video_dir(self, tmp_path):
         cfg = Config(
-            dataset="youtube_asl",
-            source={"video_ids_file": "/tmp/ids.txt"},
+            dataset={"name": "youtube_asl"},
             paths={"root": str(tmp_path)},
-            stage_config={"obfuscate": {}},
         )
         processor = ObfuscateProcessor(cfg)
         ctx = PipelineContext(
             config=cfg,
             dataset=YouTubeASLDataset(),
-            project_root=tmp_path,
             manifest_path=tmp_path / "manifest.csv",
-            video_dir=None,
+            videos_dir=None,
         )
         with pytest.raises(RuntimeError, match="video directory"):
             processor.validate_inputs(ctx)
 
     def test_raises_when_manifest_missing(self, tmp_path):
         cfg = Config(
-            dataset="youtube_asl",
-            source={"video_ids_file": "/tmp/ids.txt"},
+            dataset={"name": "youtube_asl"},
             paths={"root": str(tmp_path)},
-            stage_config={"obfuscate": {}},
         )
         processor = ObfuscateProcessor(cfg)
         ctx = PipelineContext(
             config=cfg,
             dataset=YouTubeASLDataset(),
-            project_root=tmp_path,
             manifest_path=tmp_path / "nonexistent.csv",
-            video_dir=tmp_path / "videos",
+            videos_dir=tmp_path / "videos",
         )
         with pytest.raises(RuntimeError, match="manifest not found"):
             processor.validate_inputs(ctx)

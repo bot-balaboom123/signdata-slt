@@ -6,8 +6,8 @@ import sys
 # Ensure registrations happen on import
 import signdata.datasets  # noqa: F401
 import signdata.processors  # noqa: F401
-import signdata.pose.mediapipe  # noqa: F401
-import signdata.pose.mmpose  # noqa: F401
+import signdata.post_processors  # noqa: F401
+import signdata.output  # noqa: F401
 
 from signdata.cli import parse_args
 from signdata.config import load_config
@@ -46,23 +46,13 @@ def main():
 
         overrides = args.override or []
 
-        # Wire CLI flags into config overrides
-        if args.start_from:
-            overrides.append(f"start_from={args.start_from}")
-        if args.stop_at:
-            overrides.append(f"stop_at={args.stop_at}")
-        if args.only:
-            overrides.append(f"start_from={args.only}")
-            overrides.append(f"stop_at={args.only}")
         if args.run_name:
             overrides.append(f"run_name={args.run_name}")
 
         config = load_config(args.config, overrides=overrides or None)
 
-        # PipelineRunner validates --force against recipe stages
         runner = PipelineRunner(
             config,
-            force_stage=args.force,
             force_all=args.force_all,
         )
         runner.run()

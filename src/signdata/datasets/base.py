@@ -2,7 +2,7 @@
 
 Dataset adapters bridge external data sources into the signdata pipeline.
 Each adapter is responsible for:
-- Acquiring raw data (download, copy, or validate existence)
+- Downloading raw data (or validating existence)
 - Building a manifest from raw data in the canonical format
 
 Adapters never do experiment processing (pose extraction, normalization, etc.).
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 class DatasetAdapter(ABC):
     """Abstract base class for dataset adapters.
 
-    Subclasses must implement ``acquire`` and ``build_manifest``.
+    Subclasses must implement ``download`` and ``build_manifest``.
     Override ``validate_config`` for dataset-specific config validation.
     Override ``get_source_config`` to parse adapter-specific typed config.
     """
@@ -38,8 +38,8 @@ class DatasetAdapter(ABC):
         pass
 
     @abstractmethod
-    def acquire(self, config: "Config", context: "PipelineContext") -> "PipelineContext":
-        """Acquire raw data (download, validate, organize).
+    def download(self, config: "Config", context: "PipelineContext") -> "PipelineContext":
+        """Download raw data (or validate existence).
 
         For web-mined datasets: download videos and transcripts.
         For local datasets: validate that required files exist.
@@ -62,11 +62,11 @@ class DatasetAdapter(ABC):
     def get_source_config(self, config: "Config") -> BaseModel:
         """Parse adapter-specific config into a typed Pydantic model.
 
-        Reads from ``config.source`` dict and returns a typed SourceConfig.
+        Reads from ``config.dataset.source`` dict and returns a typed SourceConfig.
         Override in subclasses to return a dataset-specific model.
         """
         return BaseModel()
 
 
-# Backward-compat alias — PipelineContext and other code reference this name.
+# Backward-compat alias
 BaseDataset = DatasetAdapter

@@ -41,18 +41,25 @@ class TestOpenASLRegistration:
 class TestOpenASLValidateConfig:
     def test_valid_config_passes(self):
         cfg = Config(
-            dataset="openasl",
-            source={"manifest_tsv": "assets/openasl-v1.0.tsv"},
+            dataset={
+                "name": "openasl",
+                "source": {"manifest_tsv": "assets/openasl-v1.0.tsv"},
+            },
         )
         OpenASLDataset.validate_config(cfg)
 
     def test_missing_manifest_tsv_raises(self):
-        cfg = Config(dataset="openasl")
+        cfg = Config(dataset={"name": "openasl"})
         with pytest.raises(ValueError, match="manifest_tsv"):
             OpenASLDataset.validate_config(cfg)
 
     def test_empty_manifest_tsv_raises(self):
-        cfg = Config(dataset="openasl", source={"manifest_tsv": ""})
+        cfg = Config(
+            dataset={
+                "name": "openasl",
+                "source": {"manifest_tsv": ""},
+            },
+        )
         with pytest.raises(ValueError, match="manifest_tsv"):
             OpenASLDataset.validate_config(cfg)
 
@@ -62,8 +69,10 @@ class TestOpenASLValidateConfig:
 class TestOpenASLSourceConfig:
     def test_defaults(self):
         cfg = Config(
-            dataset="openasl",
-            source={"manifest_tsv": "data/openasl.tsv"},
+            dataset={
+                "name": "openasl",
+                "source": {"manifest_tsv": "data/openasl.tsv"},
+            },
         )
         adapter = OpenASLDataset()
         source = adapter.get_source_config(cfg)
@@ -78,10 +87,12 @@ class TestOpenASLSourceConfig:
 
     def test_custom_text_column(self):
         cfg = Config(
-            dataset="openasl",
-            source={
-                "manifest_tsv": "data/openasl.tsv",
-                "text_column": "translation",
+            dataset={
+                "name": "openasl",
+                "source": {
+                    "manifest_tsv": "data/openasl.tsv",
+                    "text_column": "translation",
+                },
             },
         )
         adapter = OpenASLDataset()
@@ -90,10 +101,12 @@ class TestOpenASLSourceConfig:
 
     def test_text_processing_config(self):
         cfg = Config(
-            dataset="openasl",
-            source={
-                "manifest_tsv": "data/openasl.tsv",
-                "text_processing": {"lowercase": True},
+            dataset={
+                "name": "openasl",
+                "source": {
+                    "manifest_tsv": "data/openasl.tsv",
+                    "text_processing": {"lowercase": True},
+                },
             },
         )
         adapter = OpenASLDataset()
@@ -103,10 +116,12 @@ class TestOpenASLSourceConfig:
 
     def test_bbox_json_config(self):
         cfg = Config(
-            dataset="openasl",
-            source={
-                "manifest_tsv": "data/openasl.tsv",
-                "bbox_json": "data/bbox-v1.0.json",
+            dataset={
+                "name": "openasl",
+                "source": {
+                    "manifest_tsv": "data/openasl.tsv",
+                    "bbox_json": "data/bbox-v1.0.json",
+                },
             },
         )
         adapter = OpenASLDataset()
@@ -119,11 +134,7 @@ class TestOpenASLSourceConfig:
 class TestOpenASLBuildManifest:
     def _make_context(self, config):
         adapter = OpenASLDataset()
-        return PipelineContext(
-            config=config,
-            dataset=adapter,
-            project_root=Path("/tmp"),
-        )
+        return PipelineContext(config=config, dataset=adapter)
 
     def _write_tsv(self, path, data, columns=None):
         if columns is None:
@@ -141,8 +152,10 @@ class TestOpenASLBuildManifest:
 
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={"manifest_tsv": str(tsv_path)},
+            dataset={
+                "name": "openasl",
+                "source": {"manifest_tsv": str(tsv_path)},
+            },
             paths={"manifest": str(manifest_path)},
         )
         adapter = OpenASLDataset()
@@ -158,8 +171,8 @@ class TestOpenASLBuildManifest:
         assert df.iloc[0]["START"] == 0.0
         assert df.iloc[0]["END"] == 5.0
         assert df.iloc[0]["TEXT"] == "Hello world"
-        assert context.stats["manifest"]["videos"] == 2
-        assert context.stats["manifest"]["segments"] == 3
+        assert context.stats["dataset.manifest"]["videos"] == 2
+        assert context.stats["dataset.manifest"]["segments"] == 3
 
     def test_manifest_written_to_disk(self, tmp_path):
         """Manifest file is actually written as TSV."""
@@ -170,8 +183,10 @@ class TestOpenASLBuildManifest:
 
         manifest_path = tmp_path / "out" / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={"manifest_tsv": str(tsv_path)},
+            dataset={
+                "name": "openasl",
+                "source": {"manifest_tsv": str(tsv_path)},
+            },
             paths={"manifest": str(manifest_path)},
         )
         adapter = OpenASLDataset()
@@ -186,8 +201,10 @@ class TestOpenASLBuildManifest:
     def test_missing_tsv_raises(self, tmp_path):
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={"manifest_tsv": str(tmp_path / "nope.tsv")},
+            dataset={
+                "name": "openasl",
+                "source": {"manifest_tsv": str(tmp_path / "nope.tsv")},
+            },
             paths={"manifest": str(manifest_path)},
         )
         adapter = OpenASLDataset()
@@ -203,8 +220,10 @@ class TestOpenASLBuildManifest:
         )
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={"manifest_tsv": str(tsv_path)},
+            dataset={
+                "name": "openasl",
+                "source": {"manifest_tsv": str(tsv_path)},
+            },
             paths={"manifest": str(manifest_path)},
         )
         adapter = OpenASLDataset()
@@ -222,10 +241,12 @@ class TestOpenASLBuildManifest:
 
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={
-                "manifest_tsv": str(tsv_path),
-                "text_column": "translation",
+            dataset={
+                "name": "openasl",
+                "source": {
+                    "manifest_tsv": str(tsv_path),
+                    "text_column": "translation",
+                },
             },
             paths={"manifest": str(manifest_path)},
         )
@@ -245,8 +266,10 @@ class TestOpenASLBuildManifest:
 
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={"manifest_tsv": str(tsv_path)},
+            dataset={
+                "name": "openasl",
+                "source": {"manifest_tsv": str(tsv_path)},
+            },
             paths={"manifest": str(manifest_path)},
         )
         adapter = OpenASLDataset()
@@ -264,10 +287,12 @@ class TestOpenASLBuildManifest:
 
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={
-                "manifest_tsv": str(tsv_path),
-                "text_processing": {"lowercase": True, "strip_punctuation": True},
+            dataset={
+                "name": "openasl",
+                "source": {
+                    "manifest_tsv": str(tsv_path),
+                    "text_processing": {"lowercase": True, "strip_punctuation": True},
+                },
             },
             paths={"manifest": str(manifest_path)},
         )
@@ -289,8 +314,10 @@ class TestOpenASLBuildManifest:
 
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={"manifest_tsv": str(tsv_path)},
+            dataset={
+                "name": "openasl",
+                "source": {"manifest_tsv": str(tsv_path)},
+            },
             paths={"manifest": str(manifest_path)},
         )
         adapter = OpenASLDataset()
@@ -311,8 +338,10 @@ class TestOpenASLBuildManifest:
 
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={"manifest_tsv": str(tsv_path)},
+            dataset={
+                "name": "openasl",
+                "source": {"manifest_tsv": str(tsv_path)},
+            },
             paths={"manifest": str(manifest_path)},
         )
         adapter = OpenASLDataset()
@@ -320,8 +349,8 @@ class TestOpenASLBuildManifest:
         context = adapter.build_manifest(cfg, context)
 
         assert len(context.manifest_df) == 3
-        assert context.stats["manifest"]["videos"] == 1
-        assert context.stats["manifest"]["segments"] == 3
+        assert context.stats["dataset.manifest"]["videos"] == 1
+        assert context.stats["dataset.manifest"]["segments"] == 3
 
 
 # ── Bounding-box merging ─────────────────────────────────────────────────
@@ -329,11 +358,7 @@ class TestOpenASLBuildManifest:
 class TestOpenASLBboxMerge:
     def _make_context(self, config):
         adapter = OpenASLDataset()
-        return PipelineContext(
-            config=config,
-            dataset=adapter,
-            project_root=Path("/tmp"),
-        )
+        return PipelineContext(config=config, dataset=adapter)
 
     def test_bbox_merged_from_json(self, tmp_path):
         tsv_path = tmp_path / "openasl.tsv"
@@ -350,10 +375,12 @@ class TestOpenASLBboxMerge:
 
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={
-                "manifest_tsv": str(tsv_path),
-                "bbox_json": str(bbox_path),
+            dataset={
+                "name": "openasl",
+                "source": {
+                    "manifest_tsv": str(tsv_path),
+                    "bbox_json": str(bbox_path),
+                },
             },
             paths={"manifest": str(manifest_path)},
         )
@@ -386,10 +413,12 @@ class TestOpenASLBboxMerge:
 
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={
-                "manifest_tsv": str(tsv_path),
-                "bbox_json": str(bbox_path),
+            dataset={
+                "name": "openasl",
+                "source": {
+                    "manifest_tsv": str(tsv_path),
+                    "bbox_json": str(bbox_path),
+                },
             },
             paths={"manifest": str(manifest_path)},
         )
@@ -413,8 +442,10 @@ class TestOpenASLBboxMerge:
 
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={"manifest_tsv": str(tsv_path)},
+            dataset={
+                "name": "openasl",
+                "source": {"manifest_tsv": str(tsv_path)},
+            },
             paths={"manifest": str(manifest_path)},
         )
         adapter = OpenASLDataset()
@@ -434,10 +465,12 @@ class TestOpenASLBboxMerge:
 
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={
-                "manifest_tsv": str(tsv_path),
-                "bbox_json": str(tmp_path / "nonexistent.json"),
+            dataset={
+                "name": "openasl",
+                "source": {
+                    "manifest_tsv": str(tsv_path),
+                    "bbox_json": str(tmp_path / "nonexistent.json"),
+                },
             },
             paths={"manifest": str(manifest_path)},
         )
@@ -448,41 +481,41 @@ class TestOpenASLBboxMerge:
         assert "BBOX_X1" not in context.manifest_df.columns
 
 
-# ── acquire ──────────────────────────────────────────────────────────────
+# ── download ──────────────────────────────────────────────────────────────
 
-class TestOpenASLAcquire:
-    def test_acquire_missing_tsv_raises(self, tmp_path):
+class TestOpenASLDownload:
+    def test_download_missing_tsv_raises(self, tmp_path):
         cfg = Config(
-            dataset="openasl",
-            source={"manifest_tsv": str(tmp_path / "nope.tsv")},
+            dataset={
+                "name": "openasl",
+                "source": {"manifest_tsv": str(tmp_path / "nope.tsv")},
+            },
             paths={"videos": str(tmp_path / "videos")},
         )
         adapter = OpenASLDataset()
-        context = PipelineContext(
-            config=cfg, dataset=adapter, project_root=tmp_path,
-        )
+        context = PipelineContext(config=cfg, dataset=adapter)
         with pytest.raises(FileNotFoundError, match="OpenASL manifest TSV"):
-            adapter.acquire(cfg, context)
+            adapter.download(cfg, context)
 
-    def test_acquire_missing_yid_column_raises(self, tmp_path):
+    def test_download_missing_yid_column_raises(self, tmp_path):
         tsv_path = tmp_path / "bad.tsv"
         pd.DataFrame({"vid": ["s1"], "start": [0.0]}).to_csv(
             tsv_path, sep="\t", index=False,
         )
         cfg = Config(
-            dataset="openasl",
-            source={"manifest_tsv": str(tsv_path)},
+            dataset={
+                "name": "openasl",
+                "source": {"manifest_tsv": str(tsv_path)},
+            },
             paths={"videos": str(tmp_path / "videos")},
         )
         adapter = OpenASLDataset()
-        context = PipelineContext(
-            config=cfg, dataset=adapter, project_root=tmp_path,
-        )
+        context = PipelineContext(config=cfg, dataset=adapter)
         with pytest.raises(ValueError, match="yid"):
-            adapter.acquire(cfg, context)
+            adapter.download(cfg, context)
 
-    def test_acquire_all_downloaded_skips(self, tmp_path):
-        """If all videos already exist, acquire is a no-op."""
+    def test_download_all_downloaded_skips(self, tmp_path):
+        """If all videos already exist, download is a no-op."""
         tsv_path = tmp_path / "openasl.tsv"
         pd.DataFrame({
             "vid": ["s1", "s2"], "yid": ["yt1", "yt1"],
@@ -494,19 +527,19 @@ class TestOpenASLAcquire:
         (video_dir / "yt1.mp4").touch()
 
         cfg = Config(
-            dataset="openasl",
-            source={"manifest_tsv": str(tsv_path)},
+            dataset={
+                "name": "openasl",
+                "source": {"manifest_tsv": str(tsv_path)},
+            },
             paths={"videos": str(video_dir)},
         )
         adapter = OpenASLDataset()
-        context = PipelineContext(
-            config=cfg, dataset=adapter, project_root=tmp_path,
-        )
-        context = adapter.acquire(cfg, context)
-        assert context.stats["acquire"]["downloaded"] == 0
-        assert context.stats["acquire"]["total"] == 1  # 1 unique yid
+        context = PipelineContext(config=cfg, dataset=adapter)
+        context = adapter.download(cfg, context)
+        assert context.stats["dataset.download"]["downloaded"] == 0
+        assert context.stats["dataset.download"]["total"] == 1  # 1 unique yid
 
-    def test_acquire_skips_webm_extension(self, tmp_path):
+    def test_download_skips_webm_extension(self, tmp_path):
         """[P1] Extension-agnostic skip: .webm files are recognized."""
         tsv_path = tmp_path / "openasl.tsv"
         pd.DataFrame({
@@ -519,19 +552,19 @@ class TestOpenASLAcquire:
         (video_dir / "yt1.webm").touch()
 
         cfg = Config(
-            dataset="openasl",
-            source={"manifest_tsv": str(tsv_path)},
+            dataset={
+                "name": "openasl",
+                "source": {"manifest_tsv": str(tsv_path)},
+            },
             paths={"videos": str(video_dir)},
         )
         adapter = OpenASLDataset()
-        context = PipelineContext(
-            config=cfg, dataset=adapter, project_root=tmp_path,
-        )
-        context = adapter.acquire(cfg, context)
-        assert context.stats["acquire"]["downloaded"] == 0
+        context = PipelineContext(config=cfg, dataset=adapter)
+        context = adapter.download(cfg, context)
+        assert context.stats["dataset.download"]["downloaded"] == 0
 
-    def test_acquire_writes_report(self, tmp_path):
-        """[P2] Acquire writes download_report.json even on skip."""
+    def test_download_writes_report(self, tmp_path):
+        """[P2] Download writes download_report.json even on skip."""
         tsv_path = tmp_path / "openasl.tsv"
         pd.DataFrame({
             "vid": ["s1"], "yid": ["yt1"],
@@ -546,15 +579,15 @@ class TestOpenASLAcquire:
         root_dir.mkdir()
 
         cfg = Config(
-            dataset="openasl",
-            source={"manifest_tsv": str(tsv_path)},
+            dataset={
+                "name": "openasl",
+                "source": {"manifest_tsv": str(tsv_path)},
+            },
             paths={"videos": str(video_dir), "root": str(root_dir)},
         )
         adapter = OpenASLDataset()
-        context = PipelineContext(
-            config=cfg, dataset=adapter, project_root=tmp_path,
-        )
-        adapter.acquire(cfg, context)
+        context = PipelineContext(config=cfg, dataset=adapter)
+        adapter.download(cfg, context)
 
         report_path = root_dir / "acquire_report" / "download_report.json"
         assert report_path.exists()
@@ -562,7 +595,7 @@ class TestOpenASLAcquire:
         assert report["total"] == 1
         assert report["errors"] == 0
 
-    def test_acquire_missing_videos_path_raises(self, tmp_path):
+    def test_download_missing_videos_path_raises(self, tmp_path):
         tsv_path = tmp_path / "openasl.tsv"
         pd.DataFrame({
             "vid": ["s1"], "yid": ["yt1"],
@@ -570,16 +603,16 @@ class TestOpenASLAcquire:
         }).to_csv(tsv_path, sep="\t", index=False)
 
         cfg = Config(
-            dataset="openasl",
-            source={"manifest_tsv": str(tsv_path)},
+            dataset={
+                "name": "openasl",
+                "source": {"manifest_tsv": str(tsv_path)},
+            },
             paths={"videos": ""},
         )
         adapter = OpenASLDataset()
-        context = PipelineContext(
-            config=cfg, dataset=adapter, project_root=tmp_path,
-        )
+        context = PipelineContext(config=cfg, dataset=adapter)
         with pytest.raises(ValueError, match="paths.videos"):
-            adapter.acquire(cfg, context)
+            adapter.download(cfg, context)
 
 
 # ── [P1] Extension-agnostic video ID scanning ─────────────────────────────
@@ -615,13 +648,9 @@ class TestExtensionAgnosticScan:
 # ── [P2] Availability policy in build_manifest ─────────────────────────────
 
 class TestAvailabilityPolicy:
-    def _make_context(self, config, tmp_path):
+    def _make_context(self, config):
         adapter = OpenASLDataset()
-        return PipelineContext(
-            config=config,
-            dataset=adapter,
-            project_root=tmp_path,
-        )
+        return PipelineContext(config=config, dataset=adapter)
 
     def _write_tsv(self, path, data, columns=None):
         if columns is None:
@@ -643,10 +672,12 @@ class TestAvailabilityPolicy:
 
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={
-                "manifest_tsv": str(tsv_path),
-                "availability_policy": "drop_unavailable",
+            dataset={
+                "name": "openasl",
+                "source": {
+                    "manifest_tsv": str(tsv_path),
+                    "availability_policy": "drop_unavailable",
+                },
             },
             paths={
                 "manifest": str(manifest_path),
@@ -654,7 +685,7 @@ class TestAvailabilityPolicy:
             },
         )
         adapter = OpenASLDataset()
-        context = self._make_context(cfg, tmp_path)
+        context = self._make_context(cfg)
         context = adapter.build_manifest(cfg, context)
 
         df = context.manifest_df
@@ -676,10 +707,12 @@ class TestAvailabilityPolicy:
 
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={
-                "manifest_tsv": str(tsv_path),
-                "availability_policy": "mark_unavailable",
+            dataset={
+                "name": "openasl",
+                "source": {
+                    "manifest_tsv": str(tsv_path),
+                    "availability_policy": "mark_unavailable",
+                },
             },
             paths={
                 "manifest": str(manifest_path),
@@ -687,7 +720,7 @@ class TestAvailabilityPolicy:
             },
         )
         adapter = OpenASLDataset()
-        context = self._make_context(cfg, tmp_path)
+        context = self._make_context(cfg)
         context = adapter.build_manifest(cfg, context)
 
         df = context.manifest_df
@@ -710,10 +743,12 @@ class TestAvailabilityPolicy:
 
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={
-                "manifest_tsv": str(tsv_path),
-                "availability_policy": "fail_fast",
+            dataset={
+                "name": "openasl",
+                "source": {
+                    "manifest_tsv": str(tsv_path),
+                    "availability_policy": "fail_fast",
+                },
             },
             paths={
                 "manifest": str(manifest_path),
@@ -721,7 +756,7 @@ class TestAvailabilityPolicy:
             },
         )
         adapter = OpenASLDataset()
-        context = self._make_context(cfg, tmp_path)
+        context = self._make_context(cfg)
         with pytest.raises(RuntimeError, match="not found"):
             adapter.build_manifest(cfg, context)
 
@@ -740,10 +775,12 @@ class TestAvailabilityPolicy:
 
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={
-                "manifest_tsv": str(tsv_path),
-                "availability_policy": "drop_unavailable",
+            dataset={
+                "name": "openasl",
+                "source": {
+                    "manifest_tsv": str(tsv_path),
+                    "availability_policy": "drop_unavailable",
+                },
             },
             paths={
                 "manifest": str(manifest_path),
@@ -751,7 +788,7 @@ class TestAvailabilityPolicy:
             },
         )
         adapter = OpenASLDataset()
-        context = self._make_context(cfg, tmp_path)
+        context = self._make_context(cfg)
         context = adapter.build_manifest(cfg, context)
 
         assert len(context.manifest_df) == 2
@@ -765,15 +802,17 @@ class TestAvailabilityPolicy:
 
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="openasl",
-            source={
-                "manifest_tsv": str(tsv_path),
-                "availability_policy": "fail_fast",
+            dataset={
+                "name": "openasl",
+                "source": {
+                    "manifest_tsv": str(tsv_path),
+                    "availability_policy": "fail_fast",
+                },
             },
             paths={"manifest": str(manifest_path), "videos": ""},
         )
         adapter = OpenASLDataset()
-        context = self._make_context(cfg, tmp_path)
+        context = self._make_context(cfg)
         # Should NOT raise even with fail_fast — no video_dir to check
         context = adapter.build_manifest(cfg, context)
         assert len(context.manifest_df) == 1

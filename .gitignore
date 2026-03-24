@@ -183,5 +183,14 @@ acquire_report/
 *.tmp
 .DS_Store
 
+# local resources
 /resources/detection_models/rtmdet/checkpoints/
 /resources/pose_models/mmpose/checkpoints/
+/configs/test/
+paths.txt
+
+# ignore to do files
+TODO.md
+TODO_New Dataset Adapters.md
+
+#

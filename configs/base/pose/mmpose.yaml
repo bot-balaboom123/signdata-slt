@@ -1,0 +1,6 @@
+pose_model_config: resources/pose_models/mmpose/configs/rtmw3d-l_8xb64_cocktail14-384x288.py
+pose_model_checkpoint: resources/pose_models/mmpose/checkpoints/rtmw3d-l_8xb64_cocktail14-384x288-794dbc78_20240626.pth
+device: "cuda:0"
+bbox_threshold: 0.5
+keypoint_threshold: 0.3
+batch_size: 16

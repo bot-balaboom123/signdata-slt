@@ -4,15 +4,19 @@ import pytest
 from pydantic import ValidationError
 
 from signdata.config.schema import (
-    ClipVideoConfig,
     Config,
-    CropVideoConfig,
-    DetectPersonConfig,
-    ExtractorConfig,
+    DatasetConfig,
+    MMDetDetectionConfig,
+    MMPosePoseConfig,
+    MediaPipeDetectionConfig,
+    MediaPipePoseConfig,
     NormalizeConfig,
+    OutputConfig,
     PathsConfig,
+    PostProcessingConfig,
     ProcessingConfig,
-    WebDatasetConfig,
+    VideoProcessingConfig,
+    YOLODetectionConfig,
 )
 
 
@@ -24,50 +28,146 @@ class TestConfigMinimal:
             Config()
 
     def test_minimal_config(self):
-        cfg = Config(dataset="youtube_asl")
-        assert cfg.dataset == "youtube_asl"
+        cfg = Config(dataset={"name": "youtube_asl"})
+        assert cfg.dataset.name == "youtube_asl"
 
     def test_all_sub_configs_have_defaults(self):
-        cfg = Config(dataset="test")
-        assert cfg.recipe == "pose"
+        cfg = Config(dataset={"name": "test"})
         assert cfg.run_name == "default"
-        assert cfg.source == {}
-        assert cfg.stage_config == {}
-        assert isinstance(cfg.extractor, ExtractorConfig)
-        assert isinstance(cfg.paths, PathsConfig)
-        assert isinstance(cfg.normalize, NormalizeConfig)
+        assert isinstance(cfg.dataset, DatasetConfig)
         assert isinstance(cfg.processing, ProcessingConfig)
-        assert isinstance(cfg.webdataset, WebDatasetConfig)
-        assert isinstance(cfg.clip_video, ClipVideoConfig)
-        assert isinstance(cfg.detect_person, DetectPersonConfig)
-        assert isinstance(cfg.crop_video, CropVideoConfig)
+        assert isinstance(cfg.post_processing, PostProcessingConfig)
+        assert isinstance(cfg.output, OutputConfig)
+        assert isinstance(cfg.paths, PathsConfig)
+
+    def test_dataset_config_from_dict(self):
+        cfg = Config(dataset={"name": "test", "download": False})
+        assert cfg.dataset.name == "test"
+        assert cfg.dataset.download is False
+
+    def test_dataset_config_from_model(self):
+        ds = DatasetConfig(name="test", manifest=False)
+        cfg = Config(dataset=ds)
+        assert cfg.dataset.manifest is False
 
 
-class TestRecipeValidation:
-    """Config.recipe rejects invalid literals."""
+class TestDatasetConfig:
+    def test_defaults(self):
+        ds = DatasetConfig(name="test")
+        assert ds.download is True
+        assert ds.manifest is True
+        assert ds.source == {}
 
-    def test_valid_pose(self):
-        cfg = Config(dataset="test", recipe="pose")
-        assert cfg.recipe == "pose"
+    def test_with_source(self):
+        ds = DatasetConfig(
+            name="youtube_asl",
+            source={"video_ids_file": "ids.txt"},
+        )
+        assert ds.source["video_ids_file"] == "ids.txt"
 
-    def test_valid_video(self):
-        cfg = Config(dataset="test", recipe="video")
-        assert cfg.recipe == "video"
 
-    def test_invalid_recipe(self):
+class TestProcessingConfig:
+    """ProcessingConfig defaults and model_validator."""
+
+    def test_defaults(self):
+        # video2pose requires pose + pose_config, so use video2crop for defaults test
+        p = ProcessingConfig(processor="video2crop", detection="yolo",
+                             detection_config={"model": "yolov8n.pt"})
+        assert p.enabled is True
+        assert p.frame_skip == 2
+        assert p.target_fps == 24.0
+        assert p.max_workers == 1
+
+    def test_video2pose_requires_pose(self):
+        with pytest.raises(ValidationError, match="pose is required"):
+            ProcessingConfig(
+                processor="video2pose",
+                detection="null",
+            )
+
+    def test_video2pose_requires_pose_config(self):
+        with pytest.raises(ValidationError, match="pose_config"):
+            ProcessingConfig(
+                processor="video2pose",
+                detection="null",
+                pose="mmpose",
+                # missing pose_config
+            )
+
+    def test_video2pose_valid(self):
+        p = ProcessingConfig(
+            processor="video2pose",
+            detection="null",
+            pose="mediapipe",
+            pose_config={"model_complexity": 1},
+        )
+        assert isinstance(p.pose_config, MediaPipePoseConfig)
+        assert p.pose_config.model_complexity == 1
+
+    def test_detection_config_validated_yolo(self):
+        p = ProcessingConfig(
+            processor="video2crop",
+            detection="yolo",
+            detection_config={"model": "yolov8s.pt", "device": "cuda:0"},
+        )
+        assert isinstance(p.detection_config, YOLODetectionConfig)
+        assert p.detection_config.model == "yolov8s.pt"
+
+    def test_detection_config_validated_mmdet(self):
+        p = ProcessingConfig(
+            processor="video2pose",
+            detection="mmdet",
+            pose="mmpose",
+            detection_config={
+                "det_model_config": "config.py",
+                "det_model_checkpoint": "ckpt.pth",
+            },
+            pose_config={
+                "pose_model_config": "pose.py",
+                "pose_model_checkpoint": "pose.pth",
+            },
+        )
+        assert isinstance(p.detection_config, MMDetDetectionConfig)
+        assert isinstance(p.pose_config, MMPosePoseConfig)
+
+    def test_detection_null_no_config_needed(self):
+        p = ProcessingConfig(
+            processor="video2pose",
+            detection="null",
+            pose="mediapipe",
+            pose_config={},
+        )
+        assert p.detection_config is None
+
+    def test_detection_requires_config(self):
+        """Non-null detection with missing detection_config raises."""
+        with pytest.raises(ValidationError, match="detection_config"):
+            ProcessingConfig(
+                processor="video2crop",
+                detection="yolo",
+                # missing detection_config
+            )
+
+    def test_video2crop_creates_default_video_config(self):
+        p = ProcessingConfig(
+            processor="video2crop",
+            detection="yolo",
+            detection_config={"model": "yolov8n.pt"},
+        )
+        assert isinstance(p.video_config, VideoProcessingConfig)
+        assert p.video_config.codec == "libx264"
+
+    def test_invalid_processor_rejected(self):
         with pytest.raises(ValidationError):
-            Config(dataset="test", recipe="audio")
+            ProcessingConfig(processor="invalid")
+
+    def test_invalid_detection_rejected(self):
+        with pytest.raises(ValidationError):
+            ProcessingConfig(detection="invalid")
 
 
-class TestSubConfigDefaults:
-    """Each sub-config default values match expected."""
-
-    def test_extractor_defaults(self):
-        e = ExtractorConfig()
-        assert e.name == "mediapipe"
-        assert e.max_workers == 4
-
-    def test_normalize_defaults(self):
+class TestNormalizeConfig:
+    def test_defaults(self):
         n = NormalizeConfig()
         assert n.mode == "xy_isotropic_z_minmax"
         assert n.remove_z is False
@@ -76,46 +176,6 @@ class TestSubConfigDefaults:
         assert n.mask_low_confidence is False
         assert n.visibility_threshold == 0.3
         assert n.missing_value == -999.0
-
-    def test_processing_defaults(self):
-        p = ProcessingConfig()
-        assert p.max_workers == 4
-        assert p.target_fps == 24.0
-        assert p.frame_skip == 2
-        assert p.skip_existing is True
-        assert p.signer_policy == "primary_signer"
-
-    def test_paths_defaults(self):
-        p = PathsConfig()
-        assert p.root == ""
-        assert p.videos == ""
-        assert p.landmarks == ""
-
-    def test_webdataset_defaults(self):
-        w = WebDatasetConfig()
-        assert w.max_shard_count == 10000
-        assert w.max_shard_size is None
-
-    def test_clip_video_defaults(self):
-        c = ClipVideoConfig()
-        assert c.codec == "copy"
-        assert c.resize is None
-
-    def test_detect_person_defaults(self):
-        d = DetectPersonConfig()
-        assert d.enabled is False
-        assert d.model == "yolov8n.pt"
-        assert d.confidence_threshold == 0.5
-
-    def test_crop_video_defaults(self):
-        c = CropVideoConfig()
-        assert c.enabled is False
-        assert c.padding == 0.25
-        assert c.codec == "libx264"
-
-
-class TestNormalizeOptionalFields:
-    """NormalizeConfig optional fields."""
 
     def test_keypoint_preset_none(self):
         n = NormalizeConfig()
@@ -142,23 +202,91 @@ class TestNormalizeOptionalFields:
         assert n.keypoint_indices == [0, 1, 2]
 
 
-class TestTypeCoercion:
-    """Test type coercion through Pydantic."""
+class TestPostProcessingConfig:
+    def test_defaults(self):
+        pp = PostProcessingConfig()
+        assert pp.enabled is True
+        assert pp.recipes == []
+        assert pp.normalize is None
 
+    def test_with_normalize(self):
+        pp = PostProcessingConfig(
+            recipes=["normalize"],
+            normalize={"mode": "isotropic_3d"},
+        )
+        assert pp.normalize.mode == "isotropic_3d"
+
+
+class TestOutputConfig:
+    def test_defaults(self):
+        o = OutputConfig()
+        assert o.enabled is True
+        assert o.type == "webdataset"
+        assert o.config == {}
+
+    def test_with_config(self):
+        o = OutputConfig(config={"max_shard_count": 5000})
+        assert o.config["max_shard_count"] == 5000
+
+
+class TestPathsConfig:
+    def test_defaults(self):
+        p = PathsConfig()
+        assert p.root == ""
+        assert p.videos == ""
+        assert p.transcripts == ""
+        assert p.manifest == ""
+        assert p.output == ""
+        assert p.webdataset == ""
+
+
+class TestTypedDetectionConfigs:
+    def test_yolo_defaults(self):
+        c = YOLODetectionConfig()
+        assert c.model == "yolov8n.pt"
+        assert c.device == "cpu"
+        assert c.confidence_threshold == 0.5
+
+    def test_mmdet_required_fields(self):
+        c = MMDetDetectionConfig(
+            det_model_config="config.py",
+            det_model_checkpoint="ckpt.pth",
+        )
+        assert c.device == "cuda:0"
+
+    def test_mediapipe_defaults(self):
+        c = MediaPipeDetectionConfig()
+        assert c.min_detection_confidence == 0.5
+
+
+class TestTypedPoseConfigs:
+    def test_mediapipe_defaults(self):
+        c = MediaPipePoseConfig()
+        assert c.model_complexity == 1
+        assert c.refine_face_landmarks is True
+        assert c.batch_size == 16
+
+    def test_mmpose_required_fields(self):
+        c = MMPosePoseConfig(
+            pose_model_config="pose.py",
+            pose_model_checkpoint="pose.pth",
+        )
+        assert c.device == "cuda:0"
+        assert c.bbox_threshold == 0.5
+        assert c.batch_size == 16
+
+
+class TestTypeCoercion:
     def test_int_field(self):
-        p = ProcessingConfig(max_workers=8)
+        p = ProcessingConfig(
+            processor="video2crop",
+            detection="yolo",
+            detection_config={"model": "yolov8n.pt"},
+            max_workers=8,
+        )
         assert p.max_workers == 8
         assert isinstance(p.max_workers, int)
-
-    def test_float_field(self):
-        p = ProcessingConfig(min_duration=1.5)
-        assert p.min_duration == 1.5
-        assert isinstance(p.min_duration, float)
 
     def test_bool_field(self):
         n = NormalizeConfig(select_keypoints=False)
         assert n.select_keypoints is False
-
-    def test_list_field(self):
-        e = ExtractorConfig(name="mediapipe")
-        assert e.name == "mediapipe"

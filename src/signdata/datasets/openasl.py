@@ -1,13 +1,9 @@
 """OpenASL dataset adapter.
 
 OpenASL is a large-scale, open-domain ASL-English parallel corpus sourced
-from YouTube.  The official release provides:
+from YouTube.
 
-- ``openasl-v1.0.tsv``: segment manifest with columns ``vid``, ``yid``,
-  ``start``, ``end``, and a text column (configurable, default ``en``)
-- ``bbox-v1.0.json``: per-segment bounding boxes keyed by ``vid`` (optional)
-
-Source config (parsed from ``config.source``):
+Source config (parsed from ``config.dataset.source``):
     manifest_tsv: str              — path to openasl-v1.0.tsv
     bbox_json: str                 — path to bbox-v1.0.json (optional)
     text_column: str               — name of the translation-text column (default "en")
@@ -42,20 +38,8 @@ from ..utils.text import TextProcessingConfig, normalize_text
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Typed source config
-# ---------------------------------------------------------------------------
-
 class OpenASLSourceConfig(BaseModel):
-    """Typed config for OpenASL adapter.
-
-    Parsed from ``config.source`` via ``get_source_config()``.
-
-    Core columns in the official TSV are ``vid``, ``yid``, ``start``,
-    ``end``.  The name of the English-text column varies across releases
-    and can be set via ``text_column``.
-    """
-
+    """Typed config for OpenASL adapter."""
     manifest_tsv: str = ""
     bbox_json: str = ""
     text_column: str = "en"
@@ -68,46 +52,25 @@ class OpenASLSourceConfig(BaseModel):
     text_processing: TextProcessingConfig = TextProcessingConfig()
 
 
-# ---------------------------------------------------------------------------
-# Adapter
-# ---------------------------------------------------------------------------
-
 @register_dataset("openasl")
 class OpenASLDataset(DatasetAdapter):
-    """OpenASL dataset adapter.
-
-    Acquires YouTube videos using the ``yid`` column from the official
-    TSV and builds a canonical manifest by mapping::
-
-        vid   → SAMPLE_ID
-        yid   → VIDEO_ID
-        start → START
-        end   → END
-
-    Optionally merges per-segment bounding boxes from ``bbox-v1.0.json``
-    into ``BBOX_X1/Y1/X2/Y2`` columns.  When bbox data is unavailable,
-    use the ``detect_person`` pipeline stage instead.
-    """
+    """OpenASL dataset adapter."""
 
     name = "openasl"
 
     @classmethod
     def validate_config(cls, config) -> None:
-        source = config.source
+        source = config.dataset.source
         if not source.get("manifest_tsv"):
             raise ValueError(
-                "openasl requires source.manifest_tsv pointing to "
+                "openasl requires dataset.source.manifest_tsv pointing to "
                 "the official openasl-v1.0.tsv file"
             )
 
     def get_source_config(self, config) -> OpenASLSourceConfig:
-        return OpenASLSourceConfig(**config.source)
+        return OpenASLSourceConfig(**config.dataset.source)
 
-    # ------------------------------------------------------------------
-    # acquire — download videos from YouTube
-    # ------------------------------------------------------------------
-
-    def acquire(self, config, context):
+    def download(self, config, context):
         """Download OpenASL videos from YouTube via yt-dlp."""
         source = self.get_source_config(config)
         video_dir = config.paths.videos
@@ -143,11 +106,9 @@ class OpenASLDataset(DatasetAdapter):
                 "total": len(all_yids), "downloaded": 0,
                 "errors": 0, "skipped": len(all_yids),
             }
-            report_dir = os.path.join(
-                config.paths.root, "acquire_report",
-            )
+            report_dir = os.path.join(config.paths.root, "acquire_report")
             write_acquire_report(report_dir, stats, missing=[])
-            context.stats["acquire"] = stats
+            context.stats["dataset.download"] = stats
             return context
 
         self.logger.info(
@@ -164,13 +125,9 @@ class OpenASLDataset(DatasetAdapter):
             "skipped": len(existing),
         }
 
-        # Write acquire report
-        report_dir = os.path.join(
-            str(context.project_root), "acquire_report",
-        )
+        report_dir = os.path.join(config.paths.root, "acquire_report")
         write_acquire_report(report_dir, stats, missing)
 
-        # Enforce fail_fast at acquire time
         if source.availability_policy == "fail_fast" and result["errors"] > 0:
             raise RuntimeError(
                 f"{result['errors']} download(s) failed with "
@@ -178,7 +135,7 @@ class OpenASLDataset(DatasetAdapter):
                 f"See {report_dir}/download_report.json for details."
             )
 
-        context.stats["acquire"] = stats
+        context.stats["dataset.download"] = stats
         return context
 
     def _download_videos(
@@ -248,17 +205,8 @@ class OpenASLDataset(DatasetAdapter):
             "missing": missing,
         }
 
-    # ------------------------------------------------------------------
-    # build_manifest — read official TSV + optional bbox JSON
-    # ------------------------------------------------------------------
-
     def build_manifest(self, config, context):
-        """Build canonical manifest from OpenASL TSV.
-
-        Maps ``vid`` → SAMPLE_ID, ``yid`` → VIDEO_ID, ``start`` → START,
-        ``end`` → END.  The text column name is configurable via
-        ``source.text_column`` (default ``"en"``).
-        """
+        """Build canonical manifest from OpenASL TSV."""
         source = self.get_source_config(config)
         manifest_path = config.paths.manifest
 
@@ -289,7 +237,6 @@ class OpenASLDataset(DatasetAdapter):
                 text_col, list(tsv.columns),
             )
 
-        # Map to canonical columns
         df = pd.DataFrame({
             "SAMPLE_ID": tsv["vid"].astype(str),
             "VIDEO_ID": tsv["yid"].astype(str),
@@ -305,7 +252,6 @@ class OpenASLDataset(DatasetAdapter):
                 .apply(lambda t: normalize_text(t, **text_opts) if t else "")
             )
 
-        # Pass through optional columns
         _optional_passthrough = {
             "split": "SPLIT",
             "signer_id": "SIGNER_ID",
@@ -314,27 +260,24 @@ class OpenASLDataset(DatasetAdapter):
             if src_col in tsv.columns:
                 df[canon_col] = tsv[src_col].astype(str)
 
-        # Merge bounding boxes if available
         if source.bbox_json and Path(source.bbox_json).exists():
             df = self._merge_bboxes(df, source.bbox_json)
             self.logger.info(
                 "Merged bounding boxes from %s", source.bbox_json,
             )
 
-        # Apply availability policy (web-mined dataset)
         video_dir = config.paths.videos
         if video_dir and Path(video_dir).is_dir():
             df = apply_availability_policy(
                 df, video_dir, source.availability_policy,
             )
 
-        # Write manifest
         os.makedirs(os.path.dirname(manifest_path) or ".", exist_ok=True)
         df.to_csv(manifest_path, sep="\t", index=False)
 
         context.manifest_path = Path(manifest_path)
         context.manifest_df = df
-        context.stats["manifest"] = {
+        context.stats["dataset.manifest"] = {
             "videos": int(df["VIDEO_ID"].nunique()),
             "segments": len(df),
         }
@@ -346,12 +289,6 @@ class OpenASLDataset(DatasetAdapter):
 
     @staticmethod
     def _merge_bboxes(df: pd.DataFrame, bbox_path: str) -> pd.DataFrame:
-        """Merge bounding boxes from JSON into the manifest.
-
-        Expects JSON keyed by ``vid`` (SAMPLE_ID) with values as
-        ``[x1, y1, x2, y2]`` coordinate lists.  Also accepts
-        ``{"bbox": [x1, y1, x2, y2]}`` dict entries.
-        """
         df = df.copy()
 
         with open(bbox_path, "r", encoding="utf-8") as f:
@@ -362,7 +299,6 @@ class OpenASLDataset(DatasetAdapter):
         for vid in df["SAMPLE_ID"]:
             bbox = bboxes.get(str(vid))
             if bbox is not None:
-                # Handle both list and dict-with-bbox-key formats
                 if isinstance(bbox, dict):
                     bbox = bbox.get("bbox", bbox.get("box"))
                 if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:

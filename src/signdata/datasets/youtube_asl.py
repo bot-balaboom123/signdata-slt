@@ -3,7 +3,7 @@
 Handles video/transcript acquisition from YouTube and manifest generation
 from transcript JSON files.
 
-Source config (parsed from ``config.source``):
+Source config (parsed from ``config.dataset.source``):
     video_ids_file: str            — path to video ID list
     languages: list[str]           — transcript language codes
     availability_policy: str       — fail_fast | drop_unavailable | mark_unavailable
@@ -43,34 +43,19 @@ from ..utils.text import TextProcessingConfig, normalize_text
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Typed source config
-# ---------------------------------------------------------------------------
-
 class YouTubeASLSourceConfig(BaseModel):
-    """Typed config for YouTube-ASL adapter.
-
-    Parsed from ``config.source`` via ``get_source_config()``.
-    """
+    """Typed config for YouTube-ASL adapter."""
     video_ids_file: str = ""
     languages: List[str] = ["en"]
     availability_policy: AvailabilityPolicy = "drop_unavailable"
     download_format: str = "worstvideo[height>=720][fps>=24]/bestvideo[height>=480]"
     rate_limit: str = "5M"
     concurrent_fragments: int = 5
-
-    # Manifest params
     max_text_length: int = 300
     min_duration: float = 0.2
     max_duration: float = 60.0
-
-    # Text processing
     text_processing: TextProcessingConfig = TextProcessingConfig()
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _get_existing_ids(directory: str, ext: str) -> Set[str]:
     """Return set of IDs from files with the specified extension."""
@@ -84,35 +69,22 @@ def _load_video_ids(file_path: str) -> Set[str]:
         return {line.strip() for line in f if line.strip()}
 
 
-# NOTE: _get_existing_ids is kept for transcript scanning (.json).
-# For video scanning, use get_existing_video_ids from utils.availability.
-
-
-# ---------------------------------------------------------------------------
-# Adapter
-# ---------------------------------------------------------------------------
-
 @register_dataset("youtube_asl")
 class YouTubeASLDataset(DatasetAdapter):
     name = "youtube_asl"
 
     @classmethod
     def validate_config(cls, config) -> None:
-        source = config.source
+        source = config.dataset.source
         if not source.get("video_ids_file"):
             raise ValueError(
-                "youtube_asl requires source.video_ids_file to be set"
+                "youtube_asl requires dataset.source.video_ids_file to be set"
             )
 
     def get_source_config(self, config) -> YouTubeASLSourceConfig:
-        """Parse ``config.source`` dict into typed model."""
-        return YouTubeASLSourceConfig(**config.source)
+        return YouTubeASLSourceConfig(**config.dataset.source)
 
-    # ------------------------------------------------------------------
-    # acquire — download videos and transcripts
-    # ------------------------------------------------------------------
-
-    def acquire(self, config, context):
+    def download(self, config, context):
         """Download YouTube videos and transcripts."""
         source = self.get_source_config(config)
         video_dir = config.paths.videos
@@ -139,7 +111,6 @@ class YouTubeASLDataset(DatasetAdapter):
         report_dir = os.path.join(config.paths.root, "acquire_report")
         write_acquire_report(report_dir, video_stats, missing)
 
-        # Enforce fail_fast at acquire time
         if source.availability_policy == "fail_fast" and video_stats["errors"] > 0:
             raise RuntimeError(
                 f"{video_stats['errors']} download(s) failed with "
@@ -147,7 +118,7 @@ class YouTubeASLDataset(DatasetAdapter):
                 f"See {report_dir}/download_report.json for details."
             )
 
-        context.stats["acquire"] = {
+        context.stats["dataset.download"] = {
             "transcripts": transcript_stats,
             "videos": video_stats,
         }
@@ -282,10 +253,6 @@ class YouTubeASLDataset(DatasetAdapter):
             "errors": error_count, "missing": missing,
         }
 
-    # ------------------------------------------------------------------
-    # build_manifest — produce segmented manifest from transcripts
-    # ------------------------------------------------------------------
-
     def build_manifest(self, config, context):
         """Build segmented manifest from transcript JSON files."""
         source = self.get_source_config(config)
@@ -297,19 +264,17 @@ class YouTubeASLDataset(DatasetAdapter):
         if not json_files:
             self.logger.warning("No transcript files found in %s", transcript_dir)
             context.manifest_path = Path(manifest_path)
-            # Materialize empty manifest so downstream stages don't crash
             os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
             empty_df = pd.DataFrame(columns=["VIDEO_ID", "SAMPLE_ID", "START", "END", "TEXT"])
             empty_df.to_csv(manifest_path, sep="\t", index=False)
             context.manifest_df = empty_df
-            context.stats["manifest"] = {"videos": 0, "segments": 0}
+            context.stats["dataset.manifest"] = {"videos": 0, "segments": 0}
             return context
 
         self.logger.info(
             "Processing %d transcript files from %s", len(json_files), transcript_dir
         )
 
-        # Remove existing manifest to start fresh
         if os.path.exists(manifest_path):
             os.remove(manifest_path)
 
@@ -349,18 +314,16 @@ class YouTubeASLDataset(DatasetAdapter):
             from ..utils.manifest import read_manifest
             df = read_manifest(manifest_path, normalize_columns=True)
 
-            # Apply availability policy (web-mined dataset)
             video_dir = config.paths.videos
             if video_dir and Path(video_dir).is_dir():
                 df = apply_availability_policy(
                     df, video_dir, source.availability_policy,
                 )
-                # Re-write manifest with policy applied
                 df.to_csv(manifest_path, sep="\t", index=False)
 
             context.manifest_df = df
 
-        context.stats["manifest"] = {
+        context.stats["dataset.manifest"] = {
             "videos": processed_count,
             "segments": total_segments,
         }
@@ -379,11 +342,6 @@ class YouTubeASLDataset(DatasetAdapter):
         max_duration: float,
         text_options: Optional[Dict] = None,
     ) -> List[Dict]:
-        """Parse transcript entries into filtered manifest segments.
-
-        Produces canonical column names (VIDEO_ID, SAMPLE_ID, START, END,
-        TEXT) as defined in ``utils.manifest``.
-        """
         processed = []
         idx = 0
 

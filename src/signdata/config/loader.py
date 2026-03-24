@@ -23,12 +23,7 @@ def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]
 
 
 def _is_absolute(path_str: str) -> bool:
-    """Check if a path string is absolute, handling both Windows and POSIX styles.
-
-    On Windows, Path("/abs/path").is_absolute() returns False because there
-    is no drive letter. This helper treats leading '/' as absolute on all
-    platforms so that POSIX-style paths in YAML configs work correctly.
-    """
+    """Check if a path string is absolute, handling both Windows and POSIX styles."""
     return Path(path_str).is_absolute() or path_str.startswith("/")
 
 
@@ -41,13 +36,7 @@ RESOURCE_CHECKPOINT_ATTRS = {"pose_model_checkpoint", "det_model_checkpoint"}
 
 
 def _alternate_package_dirs(path: Path) -> List[Path]:
-    """Return alternate package-dir candidates for migrated model assets.
-
-    This preserves compatibility across the package rename chain
-    ``src/sign_prep`` -> ``src/sltpipe`` -> ``src/signdata`` so upgraded
-    worktrees can continue using already-downloaded assets left in older
-    ignored directories.
-    """
+    """Return alternate package-dir candidates for migrated model assets."""
     parts = list(path.parts)
     for i in range(len(parts) - 1):
         if parts[i] != "src":
@@ -70,14 +59,7 @@ def _alternate_package_dirs(path: Path) -> List[Path]:
 def _alternate_resource_model_configs(
     path: Path, project_root: Path, attr_name: str
 ) -> List[Path]:
-    """Return resource-path candidates for legacy model config locations.
-
-    Legacy built-in MMPose configs lived under
-    ``src/<package>/models/configs/*.py``. They now live under ``resources``,
-    split by asset type. When a config still points at the old location, look
-    for a shipped resource file with the same basename in the appropriate
-    resource subtree.
-    """
+    """Return resource-path candidates for legacy model config locations."""
     if attr_name not in RESOURCE_CONFIG_ROOTS:
         return []
 
@@ -106,15 +88,7 @@ def _alternate_resource_model_configs(
 def _alternate_legacy_model_checkpoints(
     path: Path, project_root: Path, attr_name: str
 ) -> List[Path]:
-    """Return legacy checkpoint candidates for resource-path checkpoint refs.
-
-    Built-in MMPose job YAMLs now reference shipped checkpoint locations under
-    ``resources/.../checkpoints``. Older docs/configs used
-    ``src/<package>/models/checkpoints/*.pth`` instead. When the new resource
-    path is configured but the file is still present only in the old location,
-    fall back to the legacy checkpoint path so users do not need to move or
-    re-download weights.
-    """
+    """Return legacy checkpoint candidates for resource-path checkpoint refs."""
     if attr_name not in RESOURCE_CHECKPOINT_ATTRS:
         return []
 
@@ -166,16 +140,16 @@ def _find_project_root(config_dir: Path) -> Path:
 def resolve_paths(config: Config, project_root: Path) -> Config:
     """Resolve relative paths to absolute paths based on project root."""
     paths = config.paths
+    dataset_name = config.dataset.name
 
     if not paths.root:
-        paths.root = str(project_root / "dataset" / config.dataset)
+        paths.root = str(project_root / "dataset" / dataset_name)
 
     root = Path(paths.root)
     if not _is_absolute(paths.root):
         root = project_root / root
         paths.root = str(root)
 
-    extractor_name = config.extractor.name
     run_name = config.run_name
 
     if not paths.videos:
@@ -193,53 +167,42 @@ def resolve_paths(config: Config, project_root: Path) -> Config:
     elif not _is_absolute(paths.manifest):
         paths.manifest = str(project_root / paths.manifest)
 
-    if not paths.landmarks:
-        paths.landmarks = str(root / "landmarks" / extractor_name / run_name)
-    elif not _is_absolute(paths.landmarks):
-        paths.landmarks = str(project_root / paths.landmarks)
-
-    if not paths.normalized:
-        paths.normalized = str(root / "normalized" / extractor_name / run_name)
-    elif not _is_absolute(paths.normalized):
-        paths.normalized = str(project_root / paths.normalized)
-
-    if not paths.clips:
-        paths.clips = str(root / "clips" / run_name)
-    elif not _is_absolute(paths.clips):
-        paths.clips = str(project_root / paths.clips)
-
-    if not paths.cropped_clips:
-        paths.cropped_clips = str(root / "cropped_clips" / run_name)
-    elif not _is_absolute(paths.cropped_clips):
-        paths.cropped_clips = str(project_root / paths.cropped_clips)
+    if not paths.output:
+        paths.output = str(root / "output")
+    elif not _is_absolute(paths.output):
+        paths.output = str(project_root / paths.output)
 
     if not paths.webdataset:
-        paths.webdataset = str(
-            root / "webdataset" / config.recipe / extractor_name / run_name
-        )
+        paths.webdataset = str(root / "webdataset")
     elif not _is_absolute(paths.webdataset):
         paths.webdataset = str(project_root / paths.webdataset)
 
-    # Resolve source.video_ids_file relative to project root
-    source = config.source
-    vid_file = source.get("video_ids_file", "")
-    if vid_file and not _is_absolute(vid_file):
-        config.source["video_ids_file"] = str(project_root / vid_file)
+    # Resolve source paths relative to project root
+    source = config.dataset.source
+    for source_key in ("video_ids_file", "manifest_tsv", "manifest_csv"):
+        val = source.get(source_key, "")
+        if val and not _is_absolute(val):
+            config.dataset.source[source_key] = str(project_root / val)
 
-    # Resolve extractor model paths relative to project root.
-    # During the package rename, prefer the configured path but fall back to
-    # the mirrored legacy/new package path if that is the only existing copy.
-    # Also preserve compatibility for pre-reorg built-in MMPose config paths
-    # that moved from ``src/.../models/configs`` into ``resources/...``.
-    for attr in ("pose_model_config", "pose_model_checkpoint",
-                 "det_model_config", "det_model_checkpoint"):
-        val = getattr(config.extractor, attr)
-        if val:
-            setattr(
-                config.extractor,
-                attr,
-                _resolve_model_path(val, project_root, attr),
-            )
+    # Resolve model paths in detection_config and pose_config
+    proc = config.processing
+    if proc.detection_config:
+        for attr in ("det_model_config", "det_model_checkpoint"):
+            val = getattr(proc.detection_config, attr, None)
+            if val:
+                setattr(
+                    proc.detection_config, attr,
+                    _resolve_model_path(val, project_root, attr),
+                )
+
+    if proc.pose_config:
+        for attr in ("pose_model_config", "pose_model_checkpoint"):
+            val = getattr(proc.pose_config, attr, None)
+            if val:
+                setattr(
+                    proc.pose_config, attr,
+                    _resolve_model_path(val, project_root, attr),
+                )
 
     return config
 
@@ -278,17 +241,18 @@ def load_config(
         for key, value in dict_overrides.items():
             _set_nested(raw, key, value)
 
-    # Validate required fields after all overrides are applied, so
-    # experiment-level overrides (e.g. changing dataset) take effect
-    # before validation.
-    dataset_name = raw.get("dataset")
-    if not dataset_name:
+    # Validate required fields
+    dataset_raw = raw.get("dataset")
+    if not dataset_raw:
         raise ValueError("Config must specify 'dataset' field")
 
-    if "recipe" not in raw:
-        raise ValueError(
-            "Config must specify 'recipe' field (either 'pose' or 'video')."
-        )
+    dataset_name = dataset_raw if isinstance(dataset_raw, str) else dataset_raw.get("name")
+    if not dataset_name:
+        raise ValueError("Config must specify 'dataset.name' field")
+
+    # Support shorthand: dataset: "name" -> dataset: {name: "name"}
+    if isinstance(raw.get("dataset"), str):
+        raw["dataset"] = {"name": raw["dataset"]}
 
     if dataset_name not in DATASET_REGISTRY:
         raise ValueError(

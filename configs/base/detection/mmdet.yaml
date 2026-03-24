@@ -1,0 +1,3 @@
+det_model_config: resources/detection_models/rtmdet/configs/rtmdet_nano_320-8xb32_coco-person.py
+det_model_checkpoint: resources/detection_models/rtmdet/checkpoints/rtmdet_nano_8xb32-100e_coco-obj365-person-05d8511e.pth
+device: "cuda:0"

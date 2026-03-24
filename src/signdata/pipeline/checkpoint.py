@@ -3,16 +3,6 @@
 Each pipeline stage writes a ``_SUCCESS.json`` marker to its output
 directory on completion.  On subsequent runs the runner checks these
 markers to skip stages whose inputs haven't changed.
-
-Hashing strategy
-----------------
-* **stage_config_hash** — SHA-256 of the config fields that affect this
-  stage's output (declared per-processor via ``config_hash_fields``).
-* **manifest_hash** — SHA-256 of the manifest file content (or DataFrame
-  bytes) so changes in the input data invalidate the checkpoint.
-* **upstream_success_hash** — SHA-256 of the ``_SUCCESS.json`` hashes of
-  the stages that actually produced the artifacts this stage consumed
-  (context-producer-based, not a static table).
 """
 
 import hashlib
@@ -24,116 +14,46 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 import pandas as pd
 
-# ---------------------------------------------------------------------------
-# Filename constant
-# ---------------------------------------------------------------------------
-
 SUCCESS_FILENAME = "_SUCCESS.json"
 
-# ---------------------------------------------------------------------------
-# Per-stage hash field registry
-#
-# Each key is a stage name; the value lists the config dot-paths whose
-# values are hashed to produce ``stage_config_hash``.
-# ---------------------------------------------------------------------------
-
+# Per-stage hash field registry — new 4-stage pipeline
 STAGE_HASH_FIELDS: Dict[str, List[str]] = {
-    "acquire": [
-        "source",
+    "dataset.download": [
+        "dataset.source",
     ],
-    "manifest": [
-        "source",
+    "dataset.manifest": [
+        "dataset.source",
     ],
-    "detect_person": [
-        "detect_person.model",
-        "detect_person.backend",
-        "detect_person.confidence_threshold",
-        "detect_person.sample_strategy",
-        "detect_person.uniform_frames",
-        "detect_person.max_frames",
-        "detect_person.device",
-        "detect_person.min_bbox_area",
+    "processing": [
+        "processing.processor",
+        "processing.detection",
+        "processing.pose",
         "processing.frame_skip",
-        "processing.signer_policy",
-    ],
-    "clip_video": [
-        "clip_video.codec",
-        "clip_video.resize",
-        "processing.min_duration",
-        "processing.max_duration",
-    ],
-    "crop_video": [
-        "crop_video.padding",
-        "crop_video.codec",
-    ],
-    "window_video": [
-        "stage_config.window_video.window_seconds",
-        "stage_config.window_video.stride_seconds",
-        "stage_config.window_video.min_window_seconds",
-        "stage_config.window_video.align_to_captions",
-    ],
-    "obfuscate": [
-        "stage_config.obfuscate.method",
-        "stage_config.obfuscate.blur_strength",
-        "stage_config.obfuscate.pixelate_size",
-        "stage_config.obfuscate.min_detection_confidence",
-    ],
-    "extract": [
-        "extractor.name",
-        # MediaPipe-specific
-        "extractor.model_complexity",
-        "extractor.min_detection_confidence",
-        "extractor.min_tracking_confidence",
-        "extractor.refine_face_landmarks",
-        # MMPose-specific
-        "extractor.pose_model_config",
-        "extractor.pose_model_checkpoint",
-        "extractor.det_model_config",
-        "extractor.det_model_checkpoint",
-        "extractor.bbox_threshold",
-        "extractor.keypoint_threshold",
-        "extractor.add_visible",
-        # Shared
-        "extractor.batch_size",
-        "extractor.device",
         "processing.target_fps",
-        "processing.frame_skip",
-        "processing.accept_fps_range",
-        "processing.min_duration",
-        "processing.max_duration",
-        "processing.signer_policy",
+        "processing.detection_config",
+        "processing.pose_config",
+        "processing.video_config",
     ],
-    "normalize": [
-        "normalize.mode",
-        "normalize.remove_z",
-        "normalize.select_keypoints",
-        "normalize.keypoint_preset",
-        "normalize.keypoint_indices",
-        "normalize.mask_empty_frames",
-        "normalize.mask_low_confidence",
-        "normalize.visibility_threshold",
-        "normalize.missing_value",
+    "post_processing.normalize": [
+        "post_processing.normalize.mode",
+        "post_processing.normalize.remove_z",
+        "post_processing.normalize.select_keypoints",
+        "post_processing.normalize.keypoint_preset",
+        "post_processing.normalize.keypoint_indices",
+        "post_processing.normalize.mask_empty_frames",
+        "post_processing.normalize.mask_low_confidence",
+        "post_processing.normalize.visibility_threshold",
+        "post_processing.normalize.missing_value",
     ],
-    "webdataset": [
-        "webdataset.max_shard_count",
-        "webdataset.max_shard_size",
-        "recipe",
+    "output.webdataset": [
+        "output.config",
+        "processing.processor",
     ],
 }
 
 
-# ---------------------------------------------------------------------------
-# Hashing helpers
-# ---------------------------------------------------------------------------
-
 def _resolve_dotpath(obj: Any, dotpath: str) -> Any:
-    """Resolve a dot-separated path on a nested object / dict.
-
-    Examples::
-
-        _resolve_dotpath(config, "extractor.name")  # config.extractor.name
-        _resolve_dotpath({"a": {"b": 1}}, "a.b")    # 1
-    """
+    """Resolve a dot-separated path on a nested object / dict."""
     current = obj
     for part in dotpath.split("."):
         if isinstance(current, dict):
@@ -155,24 +75,7 @@ def compute_stage_hash(
     stage_name: str,
     hash_fields: Optional[List[str]] = None,
 ) -> str:
-    """Compute a SHA-256 hash of the config fields relevant to *stage_name*.
-
-    Parameters
-    ----------
-    config
-        The top-level ``Config`` object (or any nested-attribute-accessible
-        object / dict).
-    stage_name : str
-        Pipeline stage name (used to look up ``STAGE_HASH_FIELDS`` when
-        *hash_fields* is not provided).
-    hash_fields : list of str, optional
-        Explicit list of config dot-paths to hash.  Overrides the registry.
-
-    Returns
-    -------
-    str
-        ``"sha256:<hex>"`` digest string.
-    """
+    """Compute a SHA-256 hash of the config fields relevant to *stage_name*."""
     fields = hash_fields or STAGE_HASH_FIELDS.get(stage_name, [])
     values = {f: _resolve_dotpath(config, f) for f in sorted(fields)}
     payload = _stable_json(values)
@@ -183,16 +86,7 @@ def compute_stage_hash(
 def compute_manifest_hash(
     manifest: Union[str, Path, pd.DataFrame],
 ) -> str:
-    """Compute a SHA-256 hash of manifest content.
-
-    Accepts either a file path (hashes raw bytes) or a DataFrame (hashes
-    the TSV serialization).
-
-    Returns
-    -------
-    str
-        ``"sha256:<hex>"`` digest string.
-    """
+    """Compute a SHA-256 hash of manifest content."""
     if isinstance(manifest, pd.DataFrame):
         payload = manifest.to_csv(sep="\t", index=False).encode()
     else:
@@ -208,16 +102,7 @@ def compute_manifest_hash(
 def success_content_hash(
     output_dir: Union[str, Path],
 ) -> str:
-    """Compute a SHA-256 hash of an existing ``_SUCCESS.json`` file.
-
-    This captures the *full* state of a completed stage (config hash,
-    manifest hash, upstream hash, timestamp) — not just the config hash.
-    Use the return value as input to ``compute_upstream_hash`` so that
-    downstream stages detect *any* upstream re-execution, even when the
-    upstream config itself didn't change.
-
-    Returns ``"sha256:missing"`` if the marker does not exist.
-    """
+    """Compute a SHA-256 hash of an existing ``_SUCCESS.json`` file."""
     path = Path(output_dir) / SUCCESS_FILENAME
     if not path.exists():
         return "sha256:missing"
@@ -228,30 +113,11 @@ def success_content_hash(
 def compute_upstream_hash(
     upstream_hashes: Sequence[str],
 ) -> str:
-    """Compute a combined hash from upstream stages' success markers.
-
-    Parameters
-    ----------
-    upstream_hashes : sequence of str
-        A hash for each upstream stage.  Callers should use
-        ``success_content_hash(output_dir)`` to obtain these — that
-        hashes the *entire* ``_SUCCESS.json`` content, so any upstream
-        re-execution (even with the same config but a changed manifest or
-        changed upstream inputs) produces a different value.
-
-    Returns
-    -------
-    str
-        ``"sha256:<hex>"`` digest string.
-    """
+    """Compute a combined hash from upstream stages' success markers."""
     combined = "\n".join(sorted(upstream_hashes))
     digest = hashlib.sha256(combined.encode()).hexdigest()
     return f"sha256:{digest}"
 
-
-# ---------------------------------------------------------------------------
-# Write / read / check
-# ---------------------------------------------------------------------------
 
 def write_success(
     output_dir: Union[str, Path],
@@ -262,14 +128,7 @@ def write_success(
     output_count: int = 1,
     output_sample: Optional[List[str]] = None,
 ) -> Path:
-    """Write a ``_SUCCESS.json`` marker to *output_dir*.
-
-    *output_count* defaults to 1 so that callers that omit it (e.g.
-    single-file stages like ``manifest``) still produce a marker that
-    ``check_success`` will accept (it rejects ``output_count <= 0``).
-
-    Returns the path to the written file.
-    """
+    """Write a ``_SUCCESS.json`` marker to *output_dir*."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -291,10 +150,7 @@ def write_success(
 def read_success(
     output_dir: Union[str, Path],
 ) -> Optional[Dict[str, Any]]:
-    """Read and parse a ``_SUCCESS.json`` marker.
-
-    Returns *None* if the file does not exist or is malformed.
-    """
+    """Read and parse a ``_SUCCESS.json`` marker."""
     path = Path(output_dir) / SUCCESS_FILENAME
     if not path.exists():
         return None
@@ -310,17 +166,7 @@ def check_success(
     manifest_hash: str,
     upstream_hash: str = "",
 ) -> bool:
-    """Validate an existing ``_SUCCESS.json`` against current hashes.
-
-    Returns *True* only when all of the following hold:
-
-    1. ``_SUCCESS.json`` exists and is valid JSON.
-    2. ``stage_config_hash`` matches.
-    3. ``manifest_hash`` matches.
-    4. ``upstream_success_hash`` matches (if provided).
-    5. ``output_count > 0``.
-    6. At least one file from ``output_sample`` still exists on disk.
-    """
+    """Validate an existing ``_SUCCESS.json`` against current hashes."""
     marker = read_success(output_dir)
     if marker is None:
         return False
@@ -337,7 +183,6 @@ def check_success(
     if marker.get("output_count", 0) <= 0:
         return False
 
-    # Spot-check: at least one sample file still exists
     samples = marker.get("output_sample", [])
     if samples:
         output_dir = Path(output_dir)

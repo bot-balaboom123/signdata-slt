@@ -7,11 +7,8 @@ import mediapipe as mp
 import numpy as np
 
 from ..base import LandmarkExtractor
-from ...registry import register_extractor
-from ...config.schema import ExtractorConfig
 
 
-@register_extractor("mediapipe")
 class MediaPipeExtractor(LandmarkExtractor):
     """Extracts holistic landmarks using MediaPipe.
 
@@ -22,7 +19,7 @@ class MediaPipeExtractor(LandmarkExtractor):
     # MediaPipe does not support true batch inference
     supports_batch_inference = False
 
-    def __init__(self, config: ExtractorConfig):
+    def __init__(self, config):
         self.refine_face = config.refine_face_landmarks
         self.face_count = 478 if self.refine_face else 468
         # Total landmark count for convenience
@@ -35,7 +32,7 @@ class MediaPipeExtractor(LandmarkExtractor):
             min_tracking_confidence=config.min_tracking_confidence,
         )
 
-    def process_frame(self, frame: np.ndarray) -> Optional[np.ndarray]:
+    def process_frame(self, frame: np.ndarray, bbox: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
         """Extract holistic landmarks from a single frame.
 
         Returns array of shape (num_keypoints, 4) with [x, y, z, visibility].
@@ -83,6 +80,7 @@ class MediaPipeExtractor(LandmarkExtractor):
     def process_batch(
         self,
         frames: List[np.ndarray],
+        bboxes: Optional[List[Optional[np.ndarray]]] = None,
         fallback_on_error: bool = True,
     ) -> List[Optional[np.ndarray]]:
         """Process a batch of frames sequentially.
@@ -92,6 +90,9 @@ class MediaPipeExtractor(LandmarkExtractor):
 
         Args:
             frames: List of input video frames (BGR format)
+            bboxes: Optional per-frame bounding boxes from upstream
+                detection. Ignored by MediaPipe Holistic, which runs on
+                the full frame.
             fallback_on_error: If True, return None for failed frames
                 and continue. If False, raise exceptions.
 

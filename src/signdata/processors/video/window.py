@@ -152,7 +152,7 @@ class WindowVideoProcessor(BaseProcessor):
 
     def run(self, context):
         cfg = self.config
-        raw_config = cfg.stage_config.get("window_video", {})
+        raw_config = getattr(cfg, 'stage_config', {}).get("window_video", {})
         stage_cfg = WindowVideoConfig(**raw_config)
 
         if stage_cfg.align_to_captions:
@@ -183,9 +183,9 @@ class WindowVideoProcessor(BaseProcessor):
             vid_start = 0.0
             vid_end = 0.0
 
-            if context.video_dir:
+            if context.videos_dir:
                 video_path = str(
-                    resolve_video_path(first_row, str(context.video_dir))
+                    resolve_video_path(first_row, str(context.videos_dir))
                 )
                 vid_end = _get_video_duration(video_path)
 
@@ -241,8 +241,8 @@ class WindowVideoProcessor(BaseProcessor):
         window_df = pd.DataFrame(all_windows)
 
         # Write stage manifest
-        if context.stage_output_dir:
-            stage_dir = context.stage_output_dir
+        if context.output_dir:
+            stage_dir = context.output_dir
         else:
             stage_dir = Path(cfg.paths.root) / "window_video" / cfg.run_name
         stage_dir = Path(stage_dir)
@@ -274,9 +274,9 @@ class WindowVideoProcessor(BaseProcessor):
         # can fall back to max(END) when video files are unavailable.
         data = read_manifest(str(context.manifest_path), normalize_columns=True)
         if not has_timing(data):
-            if not context.video_dir or not context.video_dir.exists():
+            if not context.videos_dir or not context.videos_dir.exists():
                 raise RuntimeError(
                     "Cannot run window_video — video directory "
-                    f"'{context.video_dir}' does not exist and manifest "
+                    f"'{context.videos_dir}' does not exist and manifest "
                     "has no timing columns. Run upstream video stages first."
                 )

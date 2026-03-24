@@ -24,10 +24,8 @@ def sample_config():
     from signdata.config.schema import Config
 
     return Config(
-        dataset="youtube_asl",
-        recipe="pose",
+        dataset={"name": "youtube_asl"},
         paths={"root": "/tmp/test_dataset"},
-        source={"video_ids_file": "assets/ids.txt"},
     )
 
 
@@ -35,18 +33,25 @@ def sample_config():
 def sample_yaml_file(tmp_path):
     """Write a minimal YAML config to tmp and return its path.
 
-    The file is placed inside a ``configs/jobs/`` subdirectory so that
+    The file is placed inside a ``configs/datasets/`` subdirectory so that
     ``load_config`` can compute *project_root* correctly (it strips a
-    ``configs/jobs`` parent when present).
+    ``configs`` parent when present).
     """
-    configs_dir = tmp_path / "configs" / "jobs"
+    configs_dir = tmp_path / "configs" / "datasets"
     configs_dir.mkdir(parents=True)
     yaml_path = configs_dir / "test_config.yaml"
     data = {
-        "dataset": "youtube_asl",
-        "recipe": "pose",
-        "extractor": {"name": "mediapipe"},
-        "source": {"video_ids_file": "assets/ids.txt"},
+        "dataset": {
+            "name": "youtube_asl",
+            "source": {"video_ids_file": "assets/ids.txt"},
+        },
+        "processing": {
+            "enabled": True,
+            "processor": "video2pose",
+            "detection": "null",
+            "pose": "mediapipe",
+            "pose_config": {},
+        },
     }
     yaml_path.write_text(yaml.dump(data))
     return yaml_path

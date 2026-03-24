@@ -1,0 +1,7 @@
+mode: xy_isotropic_z_minmax
+remove_z: false
+select_keypoints: true
+mask_empty_frames: true
+mask_low_confidence: false
+visibility_threshold: 0.3
+missing_value: -999.0

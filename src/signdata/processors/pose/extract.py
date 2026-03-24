@@ -17,7 +17,7 @@ from ..base import BaseProcessor
 from ...registry import register_processor
 from ...utils.video import FPSSampler, validate_video_file, get_video_fps
 from ...utils.files import get_video_filenames
-from ...utils.manifest import read_manifest, get_timing_columns, find_video_file
+from ...utils.manifest import read_manifest, get_timing_columns, resolve_video_path
 
 
 def _build_processing_tasks(
@@ -61,7 +61,6 @@ def _build_processing_tasks(
     tasks = []
 
     for _, row in timestamp_data.iterrows():
-        video_name = row.VIDEO_ID
         sentence_name = row.SAMPLE_ID
 
         if clipped_input:
@@ -70,7 +69,7 @@ def _build_processing_tasks(
             video_path = os.path.join(video_dir, f"{sentence_name}.mp4")
             start, end = 0.0, 86400.0  # Sentinel; workers stop at EOF
         else:
-            video_path = str(find_video_file(video_dir, video_name))
+            video_path = str(resolve_video_path(row, video_dir))
             start, end = row[start_col], row[end_col]
 
         output_path = os.path.join(output_dir, f"{sentence_name}.npy")
@@ -92,7 +91,7 @@ def _build_processing_tasks(
         if video_path not in video_validation_cache:
             video_validation_cache[video_path] = validate_video_file(video_path)
             if not video_validation_cache[video_path]:
-                invalid_videos.add(video_name)
+                invalid_videos.add(str(row.get("VIDEO_NAME", row.get("VIDEO_ID", ""))))
 
         if not video_validation_cache[video_path]:
             stats["invalid_video"] += 1

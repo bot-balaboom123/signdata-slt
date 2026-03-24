@@ -31,9 +31,9 @@ class TestResolveDotpath:
     def test_attr_access(self):
         class Cfg:
             class Sub:
-                name = "mediapipe"
-            extractor = Sub()
-        assert _resolve_dotpath(Cfg(), "extractor.name") == "mediapipe"
+                processor = "video2pose"
+            processing = Sub()
+        assert _resolve_dotpath(Cfg(), "processing.processor") == "video2pose"
 
     def test_missing_returns_none(self):
         assert _resolve_dotpath({"a": 1}, "b.c") is None
@@ -52,26 +52,26 @@ class TestComputeStageHash:
         assert h.startswith("sha256:")
 
     def test_deterministic(self):
-        cfg = {"normalize": {"mode": "isotropic_3d"}}
-        h1 = compute_stage_hash(cfg, "s", hash_fields=["normalize.mode"])
-        h2 = compute_stage_hash(cfg, "s", hash_fields=["normalize.mode"])
+        cfg = {"post_processing": {"normalize": {"mode": "isotropic_3d"}}}
+        h1 = compute_stage_hash(cfg, "s", hash_fields=["post_processing.normalize.mode"])
+        h2 = compute_stage_hash(cfg, "s", hash_fields=["post_processing.normalize.mode"])
         assert h1 == h2
 
     def test_different_values_different_hash(self):
-        cfg_a = {"normalize": {"mode": "isotropic_3d"}}
-        cfg_b = {"normalize": {"mode": "xy_isotropic_z_minmax"}}
-        h_a = compute_stage_hash(cfg_a, "s", hash_fields=["normalize.mode"])
-        h_b = compute_stage_hash(cfg_b, "s", hash_fields=["normalize.mode"])
+        cfg_a = {"post_processing": {"normalize": {"mode": "isotropic_3d"}}}
+        cfg_b = {"post_processing": {"normalize": {"mode": "xy_isotropic_z_minmax"}}}
+        h_a = compute_stage_hash(cfg_a, "s", hash_fields=["post_processing.normalize.mode"])
+        h_b = compute_stage_hash(cfg_b, "s", hash_fields=["post_processing.normalize.mode"])
         assert h_a != h_b
 
     def test_uses_registry_when_no_hash_fields(self):
         """When hash_fields is None, falls back to STAGE_HASH_FIELDS."""
-        cfg = {"clip_video": {"codec": "copy", "resize": None},
-               "processing": {"min_duration": 0.2, "max_duration": 60.0}}
-        h = compute_stage_hash(cfg, "clip_video")
+        cfg = {"processing": {"processor": "video2pose", "detection": "null",
+                               "pose": "mediapipe", "frame_skip": 2}}
+        h = compute_stage_hash(cfg, "processing")
         assert h.startswith("sha256:")
         # Same config should be deterministic
-        assert h == compute_stage_hash(cfg, "clip_video")
+        assert h == compute_stage_hash(cfg, "processing")
 
     def test_unknown_stage_empty_fields(self):
         """Unknown stage with no registry entry hashes empty dict."""
@@ -172,7 +172,7 @@ class TestWriteReadSuccess:
     def test_roundtrip(self, tmp_path):
         out = tmp_path / "stage_out"
         write_success(
-            out, "extract",
+            out, "processing",
             stage_config_hash="sha256:abc",
             manifest_hash="sha256:def",
             upstream_hash="sha256:ghi",
@@ -181,7 +181,7 @@ class TestWriteReadSuccess:
         )
         marker = read_success(out)
         assert marker is not None
-        assert marker["stage"] == "extract"
+        assert marker["stage"] == "processing"
         assert marker["stage_config_hash"] == "sha256:abc"
         assert marker["manifest_hash"] == "sha256:def"
         assert marker["upstream_success_hash"] == "sha256:ghi"
@@ -287,8 +287,9 @@ class TestCheckSuccess:
 class TestStageHashFields:
     def test_known_stages_registered(self):
         expected = {
-            "acquire", "manifest", "detect_person", "clip_video",
-            "crop_video", "extract", "normalize", "webdataset",
+            "dataset.download", "dataset.manifest",
+            "processing", "post_processing.normalize",
+            "output.webdataset",
         }
         assert expected <= set(STAGE_HASH_FIELDS.keys())
 

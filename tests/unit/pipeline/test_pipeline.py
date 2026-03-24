@@ -1,119 +1,74 @@
-"""Tests for PipelineContext, recipe step resolution, and PipelineRunner."""
+"""Tests for PipelineContext and PipelineRunner (4-stage pipeline)."""
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-import pandas as pd
 import pytest
 
 import signdata.datasets  # noqa: F401 – trigger registrations
-import signdata.processors  # noqa: F401
 
 from signdata.config.schema import Config
 from signdata.datasets.youtube_asl import YouTubeASLDataset
 from signdata.pipeline.context import PipelineContext
-from signdata.pipeline.recipes import get_steps, should_run_stage, RECIPES, OPTIONAL_STAGES
 from signdata.pipeline.runner import PipelineRunner
-from signdata.registry import PROCESSOR_REGISTRY
+from signdata.registry import DATASET_REGISTRY
 
 
 # ── PipelineContext ─────────────────────────────────────────────────────────
 
 class TestPipelineContext:
     def test_instantiation(self):
-        cfg = Config(dataset="youtube_asl")
+        cfg = Config(dataset={"name": "youtube_asl"})
         ds = YouTubeASLDataset()
-        ctx = PipelineContext(
-            config=cfg,
-            dataset=ds,
-            project_root=Path("/tmp"),
-        )
+        ctx = PipelineContext(config=cfg, dataset=ds)
         assert ctx.config is cfg
         assert ctx.dataset is ds
-        assert ctx.project_root == Path("/tmp")
 
     def test_defaults_empty(self):
-        cfg = Config(dataset="youtube_asl")
+        cfg = Config(dataset={"name": "youtube_asl"})
         ctx = PipelineContext(
             config=cfg,
             dataset=YouTubeASLDataset(),
-            project_root=Path("/tmp"),
         )
         assert ctx.manifest_path is None
         assert ctx.manifest_df is None
-        assert ctx.video_dir is None
-        assert ctx.manifest_producer == ""
-        assert ctx.video_dir_producer == ""
-        assert ctx.completed_steps == []
+        assert ctx.output_dir is None
+        assert ctx.webdataset_dir is None
+        assert ctx.videos_dir is None
+        assert ctx.completed_stages == []
         assert ctx.stats == {}
 
-
-# ── get_steps (recipe-driven) ──────────────────────────────────────────────
-
-class TestGetSteps:
-    def test_full_pose_recipe(self):
-        steps = get_steps("pose")
-        assert steps == RECIPES["pose"]
-
-    def test_full_video_recipe(self):
-        steps = get_steps("video")
-        assert steps == RECIPES["video"]
-
-    def test_start_from_filtering(self):
-        steps = get_steps("pose", start_from="extract")
-        assert steps == ["extract", "normalize", "webdataset"]
-
-    def test_stop_at_filtering(self):
-        steps = get_steps("pose", stop_at="manifest")
-        assert steps == ["acquire", "manifest"]
-
-    def test_start_from_and_stop_at_combined(self):
-        steps = get_steps("pose", start_from="clip_video", stop_at="extract")
-        assert steps == ["clip_video", "crop_video", "extract"]
-
-    def test_unknown_recipe_raises(self):
-        with pytest.raises(ValueError, match="Unknown recipe"):
-            get_steps("audio")
-
-    def test_start_from_not_in_recipe_raises(self):
-        with pytest.raises(ValueError, match="--from"):
-            get_steps("pose", start_from="nonexistent")
-
-    def test_stop_at_not_in_recipe_raises(self):
-        with pytest.raises(ValueError, match="--to"):
-            get_steps("pose", stop_at="nonexistent")
-
-    def test_single_stage(self):
-        steps = get_steps("pose", start_from="extract", stop_at="extract")
-        assert steps == ["extract"]
-
-
-# ── should_run_stage ───────────────────────────────────────────────────────
-
-class TestShouldRunStage:
-    def test_non_optional_always_true(self):
-        cfg = Config(dataset="test")
-        assert should_run_stage("acquire", cfg) is True
-        assert should_run_stage("manifest", cfg) is True
-        assert should_run_stage("extract", cfg) is True
-
-    def test_detect_person_disabled_by_default(self):
-        cfg = Config(dataset="test")
-        assert should_run_stage("detect_person", cfg) is False
-
-    def test_detect_person_enabled(self):
-        cfg = Config(dataset="test", detect_person={"enabled": True})
-        assert should_run_stage("detect_person", cfg) is True
-
-    def test_crop_video_disabled_by_default(self):
-        cfg = Config(dataset="test")
-        assert should_run_stage("crop_video", cfg) is False
-
-    def test_crop_video_enabled(self):
+    def test_resolve_paths(self, tmp_path):
         cfg = Config(
-            dataset="test",
-            crop_video={"enabled": True},
+            dataset={"name": "youtube_asl"},
+            run_name="exp1",
+            paths={
+                "root": str(tmp_path),
+                "videos": str(tmp_path / "videos"),
+                "manifest": str(tmp_path / "manifest.csv"),
+                "output": str(tmp_path / "output"),
+                "webdataset": str(tmp_path / "webdataset"),
+            },
         )
-        assert should_run_stage("crop_video", cfg) is True
+        ctx = PipelineContext(config=cfg, dataset=YouTubeASLDataset())
+        ctx.resolve_paths()
+
+        assert ctx.output_dir == Path(str(tmp_path / "output")) / "exp1"
+        assert ctx.webdataset_dir == Path(str(tmp_path / "webdataset")) / "exp1"
+        assert ctx.videos_dir == tmp_path / "videos"
+        assert ctx.manifest_path == tmp_path / "manifest.csv"
+
+    def test_load_manifest(self, tmp_path):
+        manifest_path = tmp_path / "manifest.csv"
+        manifest_path.write_text("SAMPLE_ID\tVIDEO_ID\ns1\tv1\n")
+
+        cfg = Config(dataset={"name": "youtube_asl"})
+        ctx = PipelineContext(config=cfg, dataset=YouTubeASLDataset())
+        ctx.load_manifest(str(manifest_path))
+
+        assert ctx.manifest_path == manifest_path
+        assert ctx.manifest_df is not None
+        assert len(ctx.manifest_df) == 1
 
 
 # ── PipelineRunner init ───────────────────────────────────────────────────
@@ -121,204 +76,173 @@ class TestShouldRunStage:
 class TestPipelineRunnerInit:
     def test_init_stores_config(self):
         cfg = Config(
-            dataset="youtube_asl",
-            recipe="pose",
-            source={"video_ids_file": "/tmp/ids.txt"},
+            dataset={"name": "youtube_asl"},
         )
         runner = PipelineRunner(cfg)
         assert runner.config is cfg
         assert isinstance(runner.dataset, YouTubeASLDataset)
 
     def test_init_force_all(self):
-        cfg = Config(dataset="youtube_asl", recipe="pose")
+        cfg = Config(dataset={"name": "youtube_asl"})
         runner = PipelineRunner(cfg, force_all=True)
         assert runner.force_all is True
-        assert runner._forced_stages == set()
 
-    def test_init_force_stage_cascades(self):
-        """--force <stage> forces that stage and all downstream."""
-        cfg = Config(dataset="youtube_asl", recipe="pose")
-        runner = PipelineRunner(cfg, force_stage="extract")
-        # extract and everything after it
-        assert "extract" in runner._forced_stages
-        assert "normalize" in runner._forced_stages
-        assert "webdataset" in runner._forced_stages
-        # stages before extract are not forced
-        assert "manifest" not in runner._forced_stages
+    def test_unknown_dataset_raises(self):
+        """PipelineRunner requires dataset to be in DATASET_REGISTRY."""
+        cfg = Config(dataset={"name": "nonexistent"})
+        with pytest.raises(KeyError):
+            PipelineRunner(cfg)
 
 
-# ── should_run_stage: clip_video timing fix (P2b) ────────────────────────
+# ── PipelineRunner.run orchestration ──────────────────────────────────────
 
-class TestShouldRunStageClipVideoTiming:
-    """clip_video requires both START and END on the same row."""
+class TestPipelineRunnerOrchestration:
+    def _make_config(self, **overrides):
+        base = {
+            "dataset": {"name": "youtube_asl", "download": True, "manifest": True},
+            "processing": {"enabled": False},
+            "post_processing": {"enabled": False},
+            "output": {"enabled": False},
+        }
+        base.update(overrides)
+        return Config(**base)
 
-    def test_clip_video_with_valid_timing(self):
-        cfg = Config(dataset="test")
-        df = pd.DataFrame({
-            "SAMPLE_ID": ["s1"],
-            "VIDEO_ID": ["v1"],
-            "START": [0.0],
-            "END": [2.0],
-        })
-        assert should_run_stage("clip_video", cfg, df) is True
+    @patch.object(YouTubeASLDataset, "build_manifest")
+    @patch.object(YouTubeASLDataset, "download")
+    def test_runs_dataset_stages(self, mock_download, mock_manifest):
+        mock_download.side_effect = lambda cfg, ctx: ctx
+        mock_manifest.side_effect = lambda cfg, ctx: ctx
 
-    def test_clip_video_start_only_no_end(self):
-        """START column present but END is all NaN → should NOT run."""
-        cfg = Config(dataset="test")
-        df = pd.DataFrame({
-            "SAMPLE_ID": ["s1"],
-            "VIDEO_ID": ["v1"],
-            "START": [0.0],
-            "END": [pd.NA],
-        })
-        assert should_run_stage("clip_video", cfg, df) is False
+        cfg = self._make_config()
+        runner = PipelineRunner(cfg)
+        context = runner.run()
 
-    def test_clip_video_split_across_rows(self):
-        """START on row 0, END on row 1 but not same row → should NOT run."""
-        cfg = Config(dataset="test")
-        df = pd.DataFrame({
-            "SAMPLE_ID": ["s1", "s2"],
-            "VIDEO_ID": ["v1", "v1"],
-            "START": [0.0, pd.NA],
-            "END": [pd.NA, 2.0],
-        })
-        assert should_run_stage("clip_video", cfg, df) is False
+        mock_download.assert_called_once()
+        mock_manifest.assert_called_once()
+        assert "dataset.download" in context.completed_stages
+        assert "dataset.manifest" in context.completed_stages
 
-    def test_clip_video_no_manifest(self):
-        """Without manifest, assume timing is available."""
-        cfg = Config(dataset="test")
-        assert should_run_stage("clip_video", cfg, None) is True
+    @patch.object(YouTubeASLDataset, "build_manifest")
+    @patch.object(YouTubeASLDataset, "download")
+    def test_skips_disabled_download(self, mock_download, mock_manifest):
+        mock_manifest.side_effect = lambda cfg, ctx: ctx
 
-
-# ── Obfuscate guard (P2c) ─────────────────────────────────────────────────
-
-class TestObfuscateGuard:
-    def test_obfuscate_registered(self):
-        """obfuscate processor is registered and in OPTIONAL_STAGES."""
-        assert "obfuscate" in PROCESSOR_REGISTRY
-        assert "obfuscate" in OPTIONAL_STAGES
-
-    def test_obfuscate_activated_by_stage_config(self):
-        """should_run_stage activates obfuscate when in stage_config."""
-        cfg = Config(dataset="test", stage_config={"obfuscate": {"method": "blur"}})
-        assert should_run_stage("obfuscate", cfg) is True
-
-    def test_obfuscate_not_activated_by_default(self):
-        cfg = Config(dataset="test")
-        assert should_run_stage("obfuscate", cfg) is False
-
-
-# ── Window video activation ────────────────────────────────────────────────
-
-class TestWindowVideoActivation:
-    def test_window_video_registered(self):
-        assert "window_video" in PROCESSOR_REGISTRY
-        assert "window_video" in OPTIONAL_STAGES
-
-    def test_window_video_activated_by_stage_config(self):
-        cfg = Config(
-            dataset="test",
-            stage_config={"window_video": {"window_seconds": 10.0}},
+        cfg = self._make_config(
+            dataset={"name": "youtube_asl", "download": False, "manifest": True},
         )
-        assert should_run_stage("window_video", cfg) is True
+        runner = PipelineRunner(cfg)
+        context = runner.run()
 
-    def test_window_video_not_activated_by_default(self):
-        cfg = Config(dataset="test")
-        assert should_run_stage("window_video", cfg) is False
+        mock_download.assert_not_called()
+        assert "dataset.download" not in context.completed_stages
 
-    def test_window_video_in_both_recipes(self):
-        assert "window_video" in RECIPES["pose"]
-        assert "window_video" in RECIPES["video"]
+    @patch.object(YouTubeASLDataset, "build_manifest")
+    @patch.object(YouTubeASLDataset, "download")
+    def test_skips_disabled_manifest(self, mock_download, mock_manifest):
+        mock_download.side_effect = lambda cfg, ctx: ctx
 
-    def test_window_video_before_clip_video_in_recipes(self):
-        for recipe_name, stages in RECIPES.items():
-            if "window_video" in stages and "clip_video" in stages:
-                assert stages.index("window_video") < stages.index("clip_video"), (
-                    f"window_video must precede clip_video in {recipe_name}"
-                )
+        cfg = self._make_config(
+            dataset={"name": "youtube_asl", "download": True, "manifest": False},
+        )
+        runner = PipelineRunner(cfg)
+        context = runner.run()
 
+        mock_manifest.assert_not_called()
+        assert "dataset.manifest" not in context.completed_stages
 
-# ── Runner checkpoint integration (P2a) ───────────────────────────────────
+    @patch.object(YouTubeASLDataset, "download")
+    def test_processing_stage(self, mock_download):
+        mock_download.side_effect = lambda cfg, ctx: ctx
 
-class TestRunnerCheckpoint:
-    def test_get_stage_output_dir(self, tmp_path):
+        mock_processor = MagicMock()
+        mock_processor.return_value.run.side_effect = lambda ctx: ctx
+
+        with patch.dict(
+            "signdata.pipeline.runner.PROCESSOR_REGISTRY",
+            {"video2pose": mock_processor},
+        ):
+            cfg = Config(
+                dataset={"name": "youtube_asl", "download": True, "manifest": False},
+                processing={
+                    "enabled": True,
+                    "processor": "video2pose",
+                    "detection": "null",
+                    "pose": "mediapipe",
+                    "pose_config": {},
+                },
+                post_processing={"enabled": False},
+                output={"enabled": False},
+            )
+            runner = PipelineRunner(cfg)
+            context = runner.run()
+
+        mock_processor.assert_called_once()
+        assert "processing.video2pose" in context.completed_stages
+
+    @patch.object(YouTubeASLDataset, "download")
+    def test_unknown_processor_raises(self, mock_download):
+        mock_download.side_effect = lambda cfg, ctx: ctx
+
         cfg = Config(
-            dataset="youtube_asl",
-            recipe="pose",
-            paths={
-                "root": str(tmp_path),
-                "clips": str(tmp_path / "clips"),
-                "landmarks": str(tmp_path / "landmarks"),
+            dataset={"name": "youtube_asl", "download": True, "manifest": False},
+            processing={
+                "enabled": True,
+                "processor": "video2pose",
+                "detection": "null",
+                "pose": "mediapipe",
+                "pose_config": {},
             },
+            post_processing={"enabled": False},
+            output={"enabled": False},
         )
         runner = PipelineRunner(cfg)
 
-        # acquire and manifest have distinct checkpoint dirs
-        assert runner._get_stage_output_dir("acquire") == tmp_path / "acquire" / "default"
-        assert runner._get_stage_output_dir("manifest") == tmp_path / "manifest" / "default"
-        assert runner._get_stage_output_dir("detect_person") == tmp_path / "detect_person" / "default"
-        assert runner._get_stage_output_dir("clip_video") == tmp_path / "clips"
-        assert runner._get_stage_output_dir("extract") == tmp_path / "landmarks"
+        with patch.dict("signdata.pipeline.runner.PROCESSOR_REGISTRY", {}, clear=True):
+            with pytest.raises(ValueError, match="Unknown processor"):
+                runner.run()
 
-    def test_acquire_manifest_distinct_checkpoint_dirs(self, tmp_path):
-        """acquire and manifest must NOT share a checkpoint directory."""
-        cfg = Config(
-            dataset="youtube_asl",
-            recipe="pose",
-            paths={"root": str(tmp_path)},
-        )
-        runner = PipelineRunner(cfg)
-        acquire_dir = runner._get_stage_output_dir("acquire")
-        manifest_dir = runner._get_stage_output_dir("manifest")
-        assert acquire_dir != manifest_dir
+    @patch.object(YouTubeASLDataset, "download")
+    def test_post_processing_stage(self, mock_download):
+        mock_download.side_effect = lambda cfg, ctx: ctx
 
-    def test_is_forced_with_force_all(self):
-        cfg = Config(dataset="youtube_asl", recipe="pose")
-        runner = PipelineRunner(cfg, force_all=True)
-        assert runner._is_forced("extract") is True
-        assert runner._is_forced("manifest") is True
+        mock_pp = MagicMock()
+        mock_pp.return_value.run.side_effect = lambda ctx: ctx
 
-    def test_is_forced_with_force_stage(self):
-        cfg = Config(dataset="youtube_asl", recipe="pose")
-        runner = PipelineRunner(cfg, force_stage="normalize")
-        assert runner._is_forced("normalize") is True
-        assert runner._is_forced("webdataset") is True
-        assert runner._is_forced("extract") is False
+        with patch.dict(
+            "signdata.pipeline.runner.POST_PROCESSOR_REGISTRY",
+            {"normalize": mock_pp},
+        ):
+            cfg = Config(
+                dataset={"name": "youtube_asl", "download": True, "manifest": False},
+                processing={"enabled": False},
+                post_processing={"enabled": True, "recipes": ["normalize"]},
+                output={"enabled": False},
+            )
+            runner = PipelineRunner(cfg)
+            context = runner.run()
 
-    def test_force_stage_validates_against_recipe(self):
-        """--force with a stage not in the recipe must raise ValueError."""
-        cfg = Config(dataset="youtube_asl", recipe="pose")
-        with pytest.raises(ValueError, match="--force"):
-            PipelineRunner(cfg, force_stage="nonexistent_stage")
+        mock_pp.assert_called_once()
+        assert "post_processing.normalize" in context.completed_stages
 
-    def test_seed_routing_sets_context_for_from(self, tmp_path):
-        """When using --from, context routing should reflect upstream stages."""
-        cfg = Config(
-            dataset="youtube_asl",
-            recipe="pose",
-            start_from="extract",
-            paths={
-                "root": str(tmp_path),
-                "videos": str(tmp_path / "videos"),
-                "manifest": str(tmp_path / "manifest.csv"),
-                "clips": str(tmp_path / "clips"),
-            },
-        )
-        runner = PipelineRunner(cfg)
+    @patch.object(YouTubeASLDataset, "download")
+    def test_output_stage(self, mock_download):
+        mock_download.side_effect = lambda cfg, ctx: ctx
 
-        context = PipelineContext(
-            config=cfg,
-            dataset=runner.dataset,
-            project_root=tmp_path,
-            manifest_path=Path(cfg.paths.manifest) if cfg.paths.manifest else None,
-            video_dir=Path(cfg.paths.videos) if cfg.paths.videos else None,
-        )
+        mock_output = MagicMock()
+        mock_output.return_value.run.side_effect = lambda ctx: ctx
 
-        steps = get_steps(cfg.recipe, cfg.start_from, cfg.stop_at)
-        runner._seed_routing(context, steps)
+        with patch.dict(
+            "signdata.pipeline.runner.OUTPUT_REGISTRY",
+            {"webdataset": mock_output},
+        ):
+            cfg = Config(
+                dataset={"name": "youtube_asl", "download": True, "manifest": False},
+                processing={"enabled": False},
+                post_processing={"enabled": False},
+                output={"enabled": True, "type": "webdataset"},
+            )
+            runner = PipelineRunner(cfg)
+            context = runner.run()
 
-        # After seeding: manifest sets both producers; clip_video (optional
-        # but assumed active when no manifest_df) updates video_dir_producer.
-        assert context.manifest_producer == "manifest"
-        assert context.video_dir_producer == "clip_video"
-        assert context.video_dir == Path(cfg.paths.clips)
+        mock_output.assert_called_once()
+        assert "output.webdataset" in context.completed_stages

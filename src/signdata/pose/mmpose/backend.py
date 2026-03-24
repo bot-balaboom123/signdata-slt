@@ -6,8 +6,6 @@ from typing import Optional, List, Tuple
 import numpy as np
 
 from ..base import LandmarkExtractor
-from ...registry import register_extractor
-from ...config.schema import ExtractorConfig
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +15,6 @@ class MultiPersonDetected(Exception):
     pass
 
 
-@register_extractor("mmpose")
 class MMPoseExtractor(LandmarkExtractor):
     """Extracts 3D pose landmarks using MMPose RTMPose3D.
 
@@ -35,7 +32,7 @@ class MMPoseExtractor(LandmarkExtractor):
 
     def __init__(
         self,
-        config: ExtractorConfig,
+        config,
         detector=None,
         pose_estimator=None,
     ):
@@ -47,32 +44,49 @@ class MMPoseExtractor(LandmarkExtractor):
         self._batch_inference_checked = False
         self._batch_inference_available = False
 
-    def process_frame(self, frame: np.ndarray) -> Optional[np.ndarray]:
-        """Detect person and extract 3D landmarks from a single frame.
+    def process_frame(
+        self, frame: np.ndarray, bbox: Optional[np.ndarray] = None,
+    ) -> Optional[np.ndarray]:
+        """Extract 3D landmarks from a single frame.
+
+        When *bbox* is provided (from an upstream detector), it is used
+        directly for pose estimation.  When *bbox* is ``None`` and an
+        internal detector exists, person detection runs first.  If
+        neither is available, a full-frame bounding box is assumed.
 
         Returns array of shape (133, 4) with [x, y, z, visibility].
-        Raises MultiPersonDetected if multiple persons detected.
+        Raises MultiPersonDetected if internal detection finds >1 person.
         """
         from mmpose.apis import inference_topdown
         from mmpose.structures import merge_data_samples
-        from mmdet.apis import inference_detector
 
-        det_result = inference_detector(self.detector, frame)
-        pred_instance = det_result.pred_instances.cpu().numpy()
+        if bbox is not None:
+            # Upstream detector already ran — use provided bboxes
+            bboxes = bbox
+        elif self.detector is not None:
+            # Legacy path: run internal detection
+            from mmdet.apis import inference_detector
 
-        bboxes = pred_instance.bboxes
-        bboxes = bboxes[np.logical_and(
-            pred_instance.labels == self.det_cat_id,
-            pred_instance.scores > self.bbox_threshold
-        )]
+            det_result = inference_detector(self.detector, frame)
+            pred_instance = det_result.pred_instances.cpu().numpy()
 
-        if len(bboxes) == 0:
-            return None
+            bboxes = pred_instance.bboxes
+            bboxes = bboxes[np.logical_and(
+                pred_instance.labels == self.det_cat_id,
+                pred_instance.scores > self.bbox_threshold
+            )]
 
-        if len(bboxes) > 1:
-            raise MultiPersonDetected(
-                f"Detected {len(bboxes)} persons with score > {self.bbox_threshold}"
-            )
+            if len(bboxes) == 0:
+                return None
+
+            if len(bboxes) > 1:
+                raise MultiPersonDetected(
+                    f"Detected {len(bboxes)} persons with score > {self.bbox_threshold}"
+                )
+        else:
+            # No detector, no bbox — full-frame fallback
+            H, W = frame.shape[:2]
+            bboxes = np.array([[0, 0, W, H]], dtype=np.float32)
 
         pose_est_results = inference_topdown(self.pose_estimator, frame, bboxes)
 
@@ -129,17 +143,20 @@ class MMPoseExtractor(LandmarkExtractor):
     def process_batch(
         self,
         frames: List[np.ndarray],
+        bboxes: Optional[List[Optional[np.ndarray]]] = None,
         fallback_on_error: bool = True,
     ) -> List[Optional[np.ndarray]]:
-        """Process a batch of frames with batched detection.
+        """Process a batch of frames with optional external bounding boxes.
 
-        Uses three-level fallback:
-        1. True batch inference (batched detection)
-        2. Sequential fallback if batch fails
-        3. Per-frame error handling (multi-person → None)
+        When *bboxes* are provided (or no internal detector exists),
+        each frame is processed individually using the supplied bbox.
+        Otherwise, uses batched internal detection with three-level
+        fallback.
 
         Args:
-            frames: List of input video frames (BGR format)
+            frames: List of input video frames (BGR format).
+            bboxes: Optional per-frame bounding boxes from upstream
+                detector (each element shape (N, 4) or None).
             fallback_on_error: If True, return None for failed frames.
 
         Returns:
@@ -148,7 +165,20 @@ class MMPoseExtractor(LandmarkExtractor):
         if not frames:
             return []
 
-        # Check batch support and try batched processing
+        # When external bboxes are provided or there is no internal
+        # detector, process per-frame with the supplied bboxes.
+        if bboxes is not None or self.detector is None:
+            results: List[Optional[np.ndarray]] = [None] * len(frames)
+            for i, frame in enumerate(frames):
+                try:
+                    bbox = bboxes[i] if bboxes else None
+                    results[i] = self.process_frame(frame, bbox=bbox)
+                except Exception:
+                    if not fallback_on_error:
+                        raise
+            return results
+
+        # Legacy path: internal batched detection
         if self._check_batch_inference_support():
             try:
                 return self._process_batch_batched(frames)

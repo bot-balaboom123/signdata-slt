@@ -1,4 +1,4 @@
-"""Pipeline context for shared state between processing steps."""
+"""Pipeline context for shared state between processing stages."""
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,32 +13,41 @@ from ..datasets.base import DatasetAdapter
 
 @dataclass
 class PipelineContext:
-    """Shared state passed between pipeline processors.
+    """Shared state passed between pipeline stages.
 
-    The runner maintains ``manifest_path`` / ``video_dir`` and their
-    corresponding ``*_producer`` fields in lockstep after each stage.
-    Processors read from these routing fields instead of hardcoding
-    paths from config.
+    The runner calls ``resolve_paths()`` once at startup to scope
+    output and webdataset directories under ``run_name``.
     """
 
     config: Config
     dataset: DatasetAdapter
-    project_root: Path
 
-    # Artifact routing — set by the runner after each stage
+    # Run-scoped artifact directories (set by resolve_paths)
+    output_dir: Optional[Path] = None
+    webdataset_dir: Optional[Path] = None
+
+    # Static paths (shared across runs)
+    videos_dir: Optional[Path] = None
     manifest_path: Optional[Path] = None
     manifest_df: Optional["pd.DataFrame"] = None
-    video_dir: Optional[Path] = None
 
-    # Set by the runner before each stage — processors that write
-    # derived artifacts (e.g. detect_person stage manifest) read this
-    # to know where to write, avoiding path duplication with the runner.
-    stage_output_dir: Optional[Path] = None
-
-    # Source tracking — which stage last produced each artifact
-    manifest_producer: str = ""
-    video_dir_producer: str = ""
+    # Flags
+    force_all: bool = False
 
     # Tracking
-    completed_steps: List[str] = field(default_factory=list)
+    completed_stages: List[str] = field(default_factory=list)
     stats: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
+    def resolve_paths(self) -> None:
+        """Scope output/webdataset under run_name to isolate runs."""
+        cfg = self.config
+        self.output_dir = Path(cfg.paths.output) / cfg.run_name
+        self.webdataset_dir = Path(cfg.paths.webdataset) / cfg.run_name
+        self.videos_dir = Path(cfg.paths.videos) if cfg.paths.videos else None
+        self.manifest_path = Path(cfg.paths.manifest) if cfg.paths.manifest else None
+
+    def load_manifest(self, manifest_path: str) -> None:
+        """Load an existing manifest (used when dataset.manifest is false)."""
+        import pandas as pd
+        self.manifest_path = Path(manifest_path)
+        self.manifest_df = pd.read_csv(manifest_path, sep="\t")

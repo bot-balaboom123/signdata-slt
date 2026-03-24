@@ -220,7 +220,8 @@ def resolve_video_path(
 
     Resolution order:
     1. If ``REL_PATH`` column is present and non-null → ``base_dir / REL_PATH``
-    2. Otherwise → ``find_video_file(base_dir, VIDEO_ID)`` (extension-aware)
+    2. Otherwise if ``VIDEO_NAME`` is present and non-null → use that stem
+    3. Otherwise → ``find_video_file(base_dir, VIDEO_ID)`` (extension-aware)
 
     Parameters
     ----------
@@ -240,6 +241,10 @@ def resolve_video_path(
     rel_path = row.get("REL_PATH") if "REL_PATH" in row.index else None
     if pd.notna(rel_path) and str(rel_path).strip():
         return base_dir / str(rel_path)
+
+    video_name = row.get("VIDEO_NAME") if "VIDEO_NAME" in row.index else None
+    if pd.notna(video_name) and str(video_name).strip():
+        return find_video_file(base_dir, str(video_name))
 
     video_id = row.get("VIDEO_ID", "")
     return find_video_file(base_dir, video_id)

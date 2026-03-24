@@ -479,14 +479,15 @@ class TestExperimentCLI:
 class TestLoadConfigDictOverrides:
     def _write_job_config(self, tmp_path):
         """Write a minimal job config in the standard directory structure."""
-        configs_dir = tmp_path / "configs" / "jobs"
+        configs_dir = tmp_path / "configs" / "datasets"
         configs_dir.mkdir(parents=True)
         yaml_path = configs_dir / "test_job.yaml"
         yaml_path.write_text(yaml.dump({
-            "dataset": "youtube_asl",
-            "recipe": "pose",
-            "source": {"video_ids_file": "assets/ids.txt"},
-            "processing": {"target_fps": 24.0, "frame_skip": 2},
+            "dataset": {
+                "name": "youtube_asl",
+                "source": {"video_ids_file": "assets/ids.txt"},
+            },
+            "processing": {"enabled": False, "target_fps": 24.0, "frame_skip": 2},
         }))
         # Create the assets file so validation passes
         assets_dir = tmp_path / "assets"

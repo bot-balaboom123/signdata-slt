@@ -186,13 +186,13 @@ class ObfuscateProcessor(BaseProcessor):
 
     def run(self, context):
         cfg = self.config
-        raw_config = cfg.stage_config.get("obfuscate", {})
+        raw_config = getattr(cfg, 'stage_config', {}).get("obfuscate", {})
         stage_cfg = ObfuscateConfig(**raw_config)
 
-        video_dir = str(context.video_dir)
+        video_dir = str(context.videos_dir)
 
-        if context.stage_output_dir:
-            output_dir = str(context.stage_output_dir)
+        if context.output_dir:
+            output_dir = str(context.output_dir)
         else:
             output_dir = str(
                 Path(cfg.paths.root) / "obfuscated" / cfg.run_name
@@ -209,7 +209,7 @@ class ObfuscateProcessor(BaseProcessor):
         data = read_manifest(str(context.manifest_path), normalize_columns=True)
 
         # Determine file naming based on upstream producer
-        clipped = context.video_dir_producer in ("clip_video", "crop_video")
+        clipped = getattr(context, 'video_dir_producer', None) in ("clip_video", "crop_video")
         id_col = "SAMPLE_ID" if clipped else "VIDEO_ID"
 
         tasks = []
@@ -282,7 +282,7 @@ class ObfuscateProcessor(BaseProcessor):
         return context
 
     def validate_inputs(self, context) -> None:
-        if not context.video_dir:
+        if not context.videos_dir:
             raise RuntimeError(
                 "Cannot run obfuscate — video directory is not set. "
                 "Run upstream video stages first."

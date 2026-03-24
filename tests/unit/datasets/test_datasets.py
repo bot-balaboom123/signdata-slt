@@ -1,6 +1,6 @@
 """Tests for dataset adapters (youtube_asl.py, how2sign.py).
 
-Covers validate_config, get_source_config, acquire, and build_manifest.
+Covers validate_config, get_source_config, download, and build_manifest.
 """
 
 import json
@@ -34,9 +34,9 @@ class TestDatasetAdapterABC:
         assert "how2sign" in DATASET_REGISTRY
 
     def test_adapter_has_required_methods(self):
-        """Adapters implement acquire, build_manifest, get_source_config."""
+        """Adapters implement download, build_manifest, get_source_config."""
         adapter = YouTubeASLDataset()
-        assert hasattr(adapter, "acquire")
+        assert hasattr(adapter, "download")
         assert hasattr(adapter, "build_manifest")
         assert hasattr(adapter, "get_source_config")
         assert hasattr(adapter, "validate_config")
@@ -47,22 +47,26 @@ class TestDatasetAdapterABC:
 class TestYouTubeASLValidateConfig:
     def test_valid_config_passes(self):
         cfg = Config(
-            dataset="youtube_asl",
-            source={"video_ids_file": "assets/ids.txt"},
+            dataset={
+                "name": "youtube_asl",
+                "source": {"video_ids_file": "assets/ids.txt"},
+            },
         )
         # Should not raise
         YouTubeASLDataset.validate_config(cfg)
 
     def test_missing_video_ids_file_raises(self):
         cfg = Config(
-            dataset="youtube_asl",
-            source={"video_ids_file": ""},
+            dataset={
+                "name": "youtube_asl",
+                "source": {"video_ids_file": ""},
+            },
         )
         with pytest.raises(ValueError, match="video_ids_file"):
             YouTubeASLDataset.validate_config(cfg)
 
     def test_default_source_raises(self):
-        cfg = Config(dataset="youtube_asl")
+        cfg = Config(dataset={"name": "youtube_asl"})
         with pytest.raises(ValueError, match="video_ids_file"):
             YouTubeASLDataset.validate_config(cfg)
 
@@ -71,15 +75,17 @@ class TestYouTubeASLValidateConfig:
 
 class TestYouTubeASLSourceConfig:
     def test_source_config_from_source_dict(self):
-        """get_source_config parses config.source into typed model."""
+        """get_source_config parses config.dataset.source into typed model."""
         cfg = Config(
-            dataset="youtube_asl",
-            source={
-                "video_ids_file": "assets/ids.txt",
-                "languages": ["en", "ase"],
-                "rate_limit": "10M",
-                "max_text_length": 500,
-                "min_duration": 0.5,
+            dataset={
+                "name": "youtube_asl",
+                "source": {
+                    "video_ids_file": "assets/ids.txt",
+                    "languages": ["en", "ase"],
+                    "rate_limit": "10M",
+                    "max_text_length": 500,
+                    "min_duration": 0.5,
+                },
             },
         )
         adapter = YouTubeASLDataset()
@@ -94,7 +100,7 @@ class TestYouTubeASLSourceConfig:
         assert source.max_duration == 60.0  # default
 
     def test_source_config_defaults(self):
-        cfg = Config(dataset="youtube_asl")
+        cfg = Config(dataset={"name": "youtube_asl"})
         adapter = YouTubeASLDataset()
         source = adapter.get_source_config(cfg)
 
@@ -106,11 +112,13 @@ class TestYouTubeASLSourceConfig:
     def test_source_config_text_processing(self):
         """Text processing fields flow into source config."""
         cfg = Config(
-            dataset="youtube_asl",
-            source={
-                "text_processing": {
-                    "lowercase": True,
-                    "strip_punctuation": True,
+            dataset={
+                "name": "youtube_asl",
+                "source": {
+                    "text_processing": {
+                        "lowercase": True,
+                        "strip_punctuation": True,
+                    },
                 },
             },
         )
@@ -127,12 +135,7 @@ class TestYouTubeASLSourceConfig:
 class TestYouTubeASLBuildManifest:
     def _make_context(self, config):
         adapter = YouTubeASLDataset()
-        from pathlib import Path
-        return PipelineContext(
-            config=config,
-            dataset=adapter,
-            project_root=Path("/tmp"),
-        )
+        return PipelineContext(config=config, dataset=adapter)
 
     def test_build_manifest_from_transcripts(self, tmp_path):
         """build_manifest produces manifest from transcript JSON files."""
@@ -149,7 +152,7 @@ class TestYouTubeASLBuildManifest:
         manifest_path = tmp_path / "manifest.csv"
 
         cfg = Config(
-            dataset="youtube_asl",
+            dataset={"name": "youtube_asl"},
             paths={
                 "transcripts": str(transcript_dir),
                 "manifest": str(manifest_path),
@@ -163,7 +166,7 @@ class TestYouTubeASLBuildManifest:
         assert len(context.manifest_df) == 2
         assert "VIDEO_ID" in context.manifest_df.columns
         assert "SAMPLE_ID" in context.manifest_df.columns
-        assert context.stats["manifest"]["segments"] == 2
+        assert context.stats["dataset.manifest"]["segments"] == 2
 
     def test_build_manifest_no_transcripts(self, tmp_path):
         """build_manifest handles empty transcript directory."""
@@ -172,7 +175,7 @@ class TestYouTubeASLBuildManifest:
         manifest_path = tmp_path / "manifest.csv"
 
         cfg = Config(
-            dataset="youtube_asl",
+            dataset={"name": "youtube_asl"},
             paths={
                 "transcripts": str(transcript_dir),
                 "manifest": str(manifest_path),
@@ -181,7 +184,7 @@ class TestYouTubeASLBuildManifest:
         context = self._make_context(cfg)
         context = YouTubeASLDataset().build_manifest(cfg, context)
 
-        assert context.stats["manifest"]["segments"] == 0
+        assert context.stats["dataset.manifest"]["segments"] == 0
 
     def test_build_manifest_filters_by_duration(self, tmp_path):
         """build_manifest respects min/max duration."""
@@ -197,7 +200,7 @@ class TestYouTubeASLBuildManifest:
 
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="youtube_asl",
+            dataset={"name": "youtube_asl"},
             paths={
                 "transcripts": str(transcript_dir),
                 "manifest": str(manifest_path),
@@ -206,7 +209,7 @@ class TestYouTubeASLBuildManifest:
         context = self._make_context(cfg)
         context = YouTubeASLDataset().build_manifest(cfg, context)
 
-        assert context.stats["manifest"]["segments"] == 1
+        assert context.stats["dataset.manifest"]["segments"] == 1
         assert context.manifest_df.iloc[0]["TEXT"] == "OK"
 
     def test_build_manifest_text_processing_wired(self, tmp_path):
@@ -221,16 +224,18 @@ class TestYouTubeASLBuildManifest:
 
         manifest_path = tmp_path / "manifest.csv"
         cfg = Config(
-            dataset="youtube_asl",
+            dataset={
+                "name": "youtube_asl",
+                "source": {
+                    "text_processing": {
+                        "lowercase": True,
+                        "strip_punctuation": True,
+                    },
+                },
+            },
             paths={
                 "transcripts": str(transcript_dir),
                 "manifest": str(manifest_path),
-            },
-            source={
-                "text_processing": {
-                    "lowercase": True,
-                    "strip_punctuation": True,
-                },
             },
         )
         context = self._make_context(cfg)
@@ -243,20 +248,8 @@ class TestYouTubeASLBuildManifest:
 
 class TestHow2SignValidateConfig:
     def test_valid_config_passes(self):
-        cfg = Config(
-            dataset="how2sign",
-            recipe="pose",
-        )
+        cfg = Config(dataset={"name": "how2sign"})
         # Should not raise — validate_config is a no-op
-        How2SignDataset.validate_config(cfg)
-
-    def test_any_recipe_accepted(self):
-        """validate_config is a no-op — recipe handles stage ordering."""
-        cfg = Config(
-            dataset="how2sign",
-            recipe="video",
-        )
-        # Should not raise
         How2SignDataset.validate_config(cfg)
 
 
@@ -265,7 +258,7 @@ class TestHow2SignValidateConfig:
 class TestHow2SignSourceConfig:
     def test_source_config_from_existing_config(self):
         cfg = Config(
-            dataset="how2sign",
+            dataset={"name": "how2sign"},
             paths={"manifest": "/data/how2sign/manifest.csv"},
         )
         adapter = How2SignDataset()
@@ -277,8 +270,10 @@ class TestHow2SignSourceConfig:
 
     def test_source_config_from_source_dict(self):
         cfg = Config(
-            dataset="how2sign",
-            source={"manifest_csv": "/data/manifest.csv", "split": "val"},
+            dataset={
+                "name": "how2sign",
+                "source": {"manifest_csv": "/data/manifest.csv", "split": "val"},
+            },
         )
         adapter = How2SignDataset()
         source = adapter.get_source_config(cfg)
@@ -287,40 +282,34 @@ class TestHow2SignSourceConfig:
         assert source.split == "val"
 
 
-# ── How2Sign acquire ────────────────────────────────────────────────────────
+# ── How2Sign download ────────────────────────────────────────────────────────
 
-class TestHow2SignAcquire:
-    def test_acquire_validates_existing_dir(self, tmp_path):
+class TestHow2SignDownload:
+    def test_download_validates_existing_dir(self, tmp_path):
         video_dir = tmp_path / "videos"
         video_dir.mkdir()
 
         cfg = Config(
-            dataset="how2sign",
+            dataset={"name": "how2sign"},
             paths={"videos": str(video_dir)},
         )
         adapter = How2SignDataset()
-        from pathlib import Path
-        context = PipelineContext(
-            config=cfg, dataset=adapter, project_root=Path("/tmp"),
-        )
+        context = PipelineContext(config=cfg, dataset=adapter)
 
         # Should not raise
-        context = adapter.acquire(cfg, context)
-        assert context.stats["acquire"]["validated"] is True
+        context = adapter.download(cfg, context)
+        assert context.stats["dataset.download"]["validated"] is True
 
-    def test_acquire_missing_dir_raises(self, tmp_path):
+    def test_download_missing_dir_raises(self, tmp_path):
         cfg = Config(
-            dataset="how2sign",
+            dataset={"name": "how2sign"},
             paths={"videos": str(tmp_path / "nonexistent")},
         )
         adapter = How2SignDataset()
-        from pathlib import Path
-        context = PipelineContext(
-            config=cfg, dataset=adapter, project_root=Path("/tmp"),
-        )
+        context = PipelineContext(config=cfg, dataset=adapter)
 
         with pytest.raises(FileNotFoundError, match="How2Sign"):
-            adapter.acquire(cfg, context)
+            adapter.download(cfg, context)
 
 
 # ── How2Sign build_manifest ────────────────────────────────────────────────
@@ -340,32 +329,26 @@ class TestHow2SignBuildManifest:
         df.to_csv(manifest_path, sep="\t", index=False)
 
         cfg = Config(
-            dataset="how2sign",
+            dataset={"name": "how2sign"},
             paths={"manifest": str(manifest_path)},
         )
         adapter = How2SignDataset()
-        from pathlib import Path
-        context = PipelineContext(
-            config=cfg, dataset=adapter, project_root=Path("/tmp"),
-        )
+        context = PipelineContext(config=cfg, dataset=adapter)
 
         context = adapter.build_manifest(cfg, context)
 
         assert context.manifest_path == manifest_path
         assert len(context.manifest_df) == 3
-        assert context.stats["manifest"]["videos"] == 2
-        assert context.stats["manifest"]["segments"] == 3
+        assert context.stats["dataset.manifest"]["videos"] == 2
+        assert context.stats["dataset.manifest"]["segments"] == 3
 
     def test_build_manifest_missing_file_raises(self, tmp_path):
         cfg = Config(
-            dataset="how2sign",
+            dataset={"name": "how2sign"},
             paths={"manifest": str(tmp_path / "nope.csv")},
         )
         adapter = How2SignDataset()
-        from pathlib import Path
-        context = PipelineContext(
-            config=cfg, dataset=adapter, project_root=Path("/tmp"),
-        )
+        context = PipelineContext(config=cfg, dataset=adapter)
 
         with pytest.raises(FileNotFoundError, match="manifest"):
             adapter.build_manifest(cfg, context)

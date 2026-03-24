@@ -1,22 +1,36 @@
-dataset: how2sign
-recipe: video
+dataset:
+  name: how2sign
+  download: true
+  manifest: true
+  source:
+    manifest_csv: dataset/how2sign/text/how2sign_realigned_val.csv
+    split: val
+
+processing:
+  enabled: true
+  processor: video2crop
+  detection: yolo
+  frame_skip: 2
+  target_fps: 24.0
+  max_workers: 4
+  detection_config:
+    model: yolov8n.pt
+    device: cpu
+    confidence_threshold: 0.5
+  video_config:
+    codec: libx264
+    padding: 0.25
+
+post_processing:
+  enabled: false
+
+output:
+  enabled: true
+  type: webdataset
+
 run_name: default
 
 paths:
   root: dataset/how2sign
   videos: dataset/how2sign/videos
   manifest: dataset/how2sign/how2sign_realigned_val.csv
-
-detect_person:
-  enabled: true
-  model: "yolov8n.pt"
-  confidence_threshold: 0.5
-  device: "cpu"
-
-crop_video:
-  enabled: true
-  padding: 0.25
-
-processing:
-  target_fps: 24.0
-  frame_skip: 2

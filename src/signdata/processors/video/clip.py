@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from ..base import BaseProcessor
 from ...registry import register_processor
-from ...utils.manifest import read_manifest, get_timing_columns, find_video_file
+from ...utils.manifest import read_manifest, get_timing_columns, resolve_video_path
 
 
 def _clip_single_video(args) -> Tuple[str, bool, str]:
@@ -73,14 +73,18 @@ class ClipVideoProcessor(BaseProcessor):
 
         data = read_manifest(manifest_path, normalize_columns=True)
         start_col, end_col = get_timing_columns(data)
-        data = data[["VIDEO_ID", "SAMPLE_ID", start_col, end_col]].dropna()
+        keep_cols = [
+            col for col in ("VIDEO_ID", "VIDEO_NAME", "REL_PATH", "SAMPLE_ID", start_col, end_col)
+            if col in data.columns
+        ]
+        data = data[keep_cols].dropna(subset=["SAMPLE_ID", start_col, end_col])
 
         codec = cfg.clip_video.codec
         resize = cfg.clip_video.resize
 
         tasks = []
         for _, row in data.iterrows():
-            vpath = str(find_video_file(video_dir, row.VIDEO_ID))
+            vpath = str(resolve_video_path(row, video_dir))
             opath = os.path.join(clips_dir, f"{row.SAMPLE_ID}.mp4")
             if not os.path.exists(vpath):
                 continue

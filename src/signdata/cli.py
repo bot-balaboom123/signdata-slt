@@ -17,22 +17,6 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Path to YAML job config file",
     )
     run_parser.add_argument(
-        "--from", dest="start_from", default=None,
-        help="Resume from this stage (inclusive)",
-    )
-    run_parser.add_argument(
-        "--to", dest="stop_at", default=None,
-        help="Stop after this stage (inclusive)",
-    )
-    run_parser.add_argument(
-        "--only", default=None,
-        help="Run a single stage only",
-    )
-    run_parser.add_argument(
-        "--force", default=None,
-        help="Force rerun of this stage (and downstream)",
-    )
-    run_parser.add_argument(
         "--force-all", action="store_true", default=False,
         help="Force rerun of all stages",
     )

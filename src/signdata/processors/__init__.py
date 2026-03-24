@@ -1,24 +1,11 @@
-"""Pipeline step implementations."""
+"""Pipeline processors."""
 
 from .base import BaseProcessor
-from .detection import DetectPersonProcessor
-from .output import WebDatasetProcessor
-from .pose import ExtractProcessor, NormalizeProcessor
-from .video import (
-    ClipVideoProcessor,
-    CropVideoProcessor,
-    ObfuscateProcessor,
-    WindowVideoProcessor,
-)
+from .video2pose import Video2PoseProcessor
+from .video2crop import Video2CropProcessor
 
 __all__ = [
     "BaseProcessor",
-    "DetectPersonProcessor",
-    "WindowVideoProcessor",
-    "ClipVideoProcessor",
-    "CropVideoProcessor",
-    "ObfuscateProcessor",
-    "ExtractProcessor",
-    "NormalizeProcessor",
-    "WebDatasetProcessor",
+    "Video2PoseProcessor",
+    "Video2CropProcessor",
 ]
