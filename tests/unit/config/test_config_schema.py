@@ -74,8 +74,7 @@ class TestProcessingConfig:
         p = ProcessingConfig(processor="video2crop", detection="yolo",
                              detection_config={"model": "yolov8n.pt"})
         assert p.enabled is True
-        assert p.frame_skip == 2
-        assert p.target_fps == 24.0
+        assert p.sample_rate == 0.5
         assert p.max_workers == 1
 
     def test_video2pose_requires_pose(self):
@@ -156,6 +155,7 @@ class TestProcessingConfig:
         )
         assert isinstance(p.video_config, VideoProcessingConfig)
         assert p.video_config.codec == "libx264"
+        assert p.video_config.padding == 0.0
 
     def test_invalid_processor_rejected(self):
         with pytest.raises(ValidationError):
@@ -164,6 +164,48 @@ class TestProcessingConfig:
     def test_invalid_detection_rejected(self):
         with pytest.raises(ValidationError):
             ProcessingConfig(detection="invalid")
+
+    def test_legacy_frame_skip_maps_to_ratio(self):
+        with pytest.warns(FutureWarning, match="processing.frame_skip is deprecated"):
+            p = ProcessingConfig(
+                processor="video2crop",
+                detection="yolo",
+                detection_config={"model": "yolov8n.pt"},
+                frame_skip=2,
+            )
+        assert p.sample_rate == 0.5
+
+    def test_legacy_target_fps_maps_to_sample_rate(self):
+        with pytest.warns(FutureWarning, match="processing.target_fps is deprecated"):
+            p = ProcessingConfig(
+                processor="video2crop",
+                detection="yolo",
+                detection_config={"model": "yolov8n.pt"},
+                target_fps=24.0,
+            )
+        assert p.sample_rate == 24.0
+
+    def test_legacy_frame_skip_one_maps_to_native(self):
+        with pytest.warns(FutureWarning, match="processing.frame_skip is deprecated"):
+            p = ProcessingConfig(
+                processor="video2pose",
+                detection="null",
+                pose="mediapipe",
+                pose_config={"model_complexity": 1},
+                frame_skip=1,
+            )
+        assert p.sample_rate is None
+
+    def test_legacy_target_fps_and_frame_skip_map_with_warning(self):
+        with pytest.warns(FutureWarning, match="target FPS but no longer keeps a separate detection-only stride"):
+            p = ProcessingConfig(
+                processor="video2crop",
+                detection="yolo",
+                detection_config={"model": "yolov8n.pt"},
+                frame_skip=2,
+                target_fps=24.0,
+            )
+        assert p.sample_rate == 24.0
 
 
 class TestNormalizeConfig:

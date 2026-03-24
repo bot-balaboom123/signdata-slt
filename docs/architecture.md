@@ -8,8 +8,8 @@ python -m signdata experiment <experiment.yaml>
 ```
 
 `src/signdata/__main__.py` imports `signdata.datasets`,
-`signdata.processors`, and the pose backend subpackages to populate the
-registries before any config is executed.
+`signdata.processors`, `signdata.post_processors`, and `signdata.output`
+to populate registries before any config is executed.
 
 ## Run Flow
 
@@ -22,14 +22,13 @@ load_config()          # resolve paths and apply overrides
   ▼
 PipelineRunner(config)
   │  ├─ look up dataset in DATASET_REGISTRY
-  │  ├─ derive stage list from config.recipe
-  │  └─ slice with start_from / stop_at if requested
+  │  ├─ resolve run-scoped output paths
+  │  ├─ run dataset.download if enabled
+  │  ├─ run dataset.manifest if enabled
+  │  ├─ run processing.<processor> if enabled
+  │  ├─ run post_processing.<recipe> entries if enabled
+  │  └─ run output.<type> if enabled
   │
-  ▼
-for each active stage:
-  │  dataset adapter handles acquire / manifest
-  │  registered processor handles other stages
-  │  context routing is updated after each stage
   ▼
 PipelineContext (final)
 ```
@@ -39,13 +38,14 @@ job under `configs/jobs/...` with its own override set.
 
 ## Registries
 
-Three global registries live in `src/signdata/registry.py`:
+Four global registries live in `src/signdata/registry.py`:
 
 | Decorator | Registry | Base class |
 |---|---|---|
-| `@register_dataset(name)` | `DATASET_REGISTRY` | `BaseDataset` |
+| `@register_dataset(name)` | `DATASET_REGISTRY` | `DatasetAdapter` |
 | `@register_processor(name)` | `PROCESSOR_REGISTRY` | `BaseProcessor` |
-| `@register_extractor(name)` | `EXTRACTOR_REGISTRY` | `LandmarkExtractor` |
+| `@register_post_processor(name)` | `POST_PROCESSOR_REGISTRY` | `BasePostProcessor` |
+| `@register_output(name)` | `OUTPUT_REGISTRY` | `BaseOutput` |
 
 ## Processing
 
@@ -53,15 +53,10 @@ The pipeline runner dispatches to the processor specified by
 `config.processing.processor`:
 
 - `video2pose` — video → pose landmarks (.npy), using detection + pose backends
-- `video2crop` — video → cropped video (.mp4), using detection + ffmpeg
+- `video2crop` — video → cropped video (.mp4), using detection + `src/signdata/processors/video/ffmpeg.py`
 
-Additional registered stages (`clip_video`, `window_video`, `obfuscate`) can be
-used standalone but are not part of the main processing dispatch.
-
-Optional stages only run when enabled by config:
-
-- `obfuscate` requires `stage_config.obfuscate`
-- `window_video` requires `stage_config.window_video`
+Post-processing then runs entries from `config.post_processing.recipes`. The
+built-in recipe is `normalize`.
 
 ## PipelineContext
 
@@ -71,24 +66,28 @@ Optional stages only run when enabled by config:
 |---|---|---|
 | `config` | `Config` | Full parsed config |
 | `dataset` | `DatasetAdapter` | Active dataset adapter |
-| `project_root` | `Path` | Repository root |
+| `output_dir` | `Path?` | Run-scoped output directory: `{paths.output}/{run_name}` |
+| `webdataset_dir` | `Path?` | Run-scoped shard directory: `{paths.webdataset}/{run_name}` |
+| `videos_dir` | `Path?` | Source video directory |
 | `manifest_path` | `Path?` | Current manifest path |
 | `manifest_df` | `DataFrame?` | Loaded manifest |
-| `video_dir` | `Path?` | Current video source directory |
-| `stage_output_dir` | `Path?` | Output directory for the active stage |
-| `completed_steps` | `list[str]` | Completed stage names |
+| `force_all` | `bool` | Rerun outputs even if files already exist |
+| `completed_stages` | `list[str]` | Completed stage names |
 | `stats` | `dict[str, dict]` | Per-stage counters |
 
-The runner updates routing fields such as `manifest_path` and `video_dir` after
-each stage so downstream stages read the correct artifacts instead of
-hardcoding earlier paths.
+The runner resolves run-scoped output paths once at startup, then each stage
+reads and writes through `PipelineContext` instead of hardcoding artifact paths.
 
 ## Package Layout
 
 - `src/signdata/datasets/` contains dataset adapters.
-- `src/signdata/pose/` contains extractors and MMPose variants.
-- `src/signdata/detection/` contains detector backends.
-- `src/signdata/processors/` contains stage implementations grouped by domain.
+- `src/signdata/processors/detection/` contains detector backends and bbox utilities.
+- `src/signdata/processors/pose/` contains pose estimators and presets.
+- `src/signdata/processors/sampler/` contains frame sampling utilities for `video2pose`.
+- `src/signdata/processors/video/` contains shared video helpers such as `ffmpeg.py`.
+- `src/signdata/processors/` contains top-level processors such as `video2pose` and `video2crop`.
+- `src/signdata/post_processors/` contains post-processing recipes such as `normalize`.
+- `src/signdata/output/` contains output writers such as `webdataset`.
 - `resources/` contains shipped model config assets.
 
 ## See Also

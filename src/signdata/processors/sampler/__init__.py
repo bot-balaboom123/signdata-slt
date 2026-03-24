@@ -9,26 +9,26 @@ from .read import read_sampled_frames
 
 
 def create_sampler(
-    frame_skip: int,
-    target_fps: Optional[float] = None,
+    sample_rate: Optional[float] = None,
     source_fps: Optional[float] = None,
 ) -> BaseSampler:
     """Factory: create a frame sampler.
 
-    If target_fps and source_fps are both provided, uses FPS-based
-    downsampling. Otherwise falls back to simple frame skipping.
+    Sampling rules:
+      - ``None`` => keep native FPS
+      - ``0 < sample_rate < 1`` => keep that ratio of source frames
+      - ``sample_rate >= 1`` => downsample to that absolute FPS
 
     Args:
-        frame_skip: Take every Nth frame (used as fallback).
-        target_fps: Target output FPS (if available).
-        source_fps: Source video FPS (needed for FPS-based sampling).
+        sample_rate: Native / ratio / FPS selector.
+        source_fps: Source video FPS.
 
     Returns:
         A BaseSampler instance.
     """
-    if target_fps is not None and source_fps is not None and source_fps > 0:
-        return FPSSampler(source_fps, target_fps)
-    return SkipSampler(frame_skip)
+    if source_fps is not None and source_fps > 0:
+        return FPSSampler(source_fps, sample_rate)
+    return SkipSampler(1)
 
 
 __all__ = [

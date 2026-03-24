@@ -1,5 +1,6 @@
 """Pydantic configuration models."""
 
+import warnings
 from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -62,7 +63,7 @@ POSE_CONFIG_MAP = {
 
 class VideoProcessingConfig(BaseModel):
     codec: str = "libx264"
-    padding: float = 0.25
+    padding: float = 0.0
     resize: Optional[List[int]] = None
 
 
@@ -81,9 +82,8 @@ class ProcessingConfig(BaseModel):
     detection: Literal["yolo", "mediapipe", "mmdet", "null"] = "null"
     pose: Optional[Literal["mediapipe", "mmpose"]] = None
 
-    # Shared params
-    frame_skip: int = 2
-    target_fps: Optional[float] = 24.0
+    # Shared sampling param: native / ratio / absolute FPS
+    sample_rate: Optional[float] = 0.5
     max_workers: int = 1
 
     # Backend-specific configs — raw dicts from YAML, validated into typed
@@ -96,6 +96,117 @@ class ProcessingConfig(BaseModel):
         MediaPipePoseConfig, MMPosePoseConfig, dict,
     ]] = None
     video_config: Optional[VideoProcessingConfig] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_sampling_keys(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        has_sample_rate = "sample_rate" in data
+        has_frame_skip = "frame_skip" in data
+        has_target_fps = "target_fps" in data
+
+        if not (has_frame_skip or has_target_fps):
+            return data
+
+        migrated = dict(data)
+        processor = migrated.get("processor", "video2pose")
+
+        if has_sample_rate:
+            warnings.warn(
+                "processing.frame_skip and processing.target_fps are deprecated "
+                "and ignored when processing.sample_rate is set.",
+                FutureWarning,
+                stacklevel=2,
+            )
+            migrated.pop("frame_skip", None)
+            migrated.pop("target_fps", None)
+            return migrated
+
+        frame_skip = migrated.pop("frame_skip", None)
+        target_fps = migrated.pop("target_fps", None)
+
+        warning_suffix = (
+            "Use processing.sample_rate instead: null keeps native FPS, "
+            "0<sample_rate<1 keeps that fraction of frames, and "
+            "sample_rate>=1 downsamples to that FPS."
+        )
+
+        if frame_skip is not None:
+            frame_skip = int(frame_skip)
+            if frame_skip <= 0:
+                raise ValueError("processing.frame_skip must be a positive integer")
+
+        if target_fps is not None and target_fps <= 0:
+            raise ValueError(
+                "processing.target_fps (deprecated) must be positive or null — "
+                "use processing.sample_rate instead"
+            )
+
+        if target_fps is not None:
+            migrated["sample_rate"] = float(target_fps)
+            if frame_skip is not None:
+                if processor == "video2crop":
+                    warnings.warn(
+                        "processing.frame_skip and processing.target_fps are "
+                        "deprecated. They were mapped to "
+                        f"processing.sample_rate={float(target_fps)!r}. "
+                        "This preserves the old target FPS but no longer keeps a "
+                        "separate detection-only stride for video2crop. "
+                        + warning_suffix,
+                        FutureWarning,
+                        stacklevel=2,
+                    )
+                else:
+                    warnings.warn(
+                        "processing.frame_skip and processing.target_fps are "
+                        "deprecated. They were mapped to "
+                        f"processing.sample_rate={float(target_fps)!r}. "
+                        "This matches the old video2pose behavior where "
+                        "target_fps took precedence over frame_skip. "
+                        + warning_suffix,
+                        FutureWarning,
+                        stacklevel=2,
+                    )
+            else:
+                warnings.warn(
+                    "processing.target_fps is deprecated and was mapped to "
+                    f"processing.sample_rate={float(target_fps)!r}. "
+                    + warning_suffix,
+                    FutureWarning,
+                    stacklevel=2,
+                )
+            return migrated
+
+        sample_rate = None if frame_skip == 1 else (1.0 / frame_skip)
+        migrated["sample_rate"] = sample_rate
+        if processor == "video2crop":
+            warnings.warn(
+                "processing.frame_skip is deprecated and was mapped to "
+                f"processing.sample_rate={sample_rate!r}. "
+                "This preserves the approximate keep ratio, but video2crop no "
+                "longer applies frame skipping only to detection. "
+                + warning_suffix,
+                FutureWarning,
+                stacklevel=2,
+            )
+        else:
+            warnings.warn(
+                "processing.frame_skip is deprecated and was mapped to "
+                f"processing.sample_rate={sample_rate!r}. "
+                + warning_suffix,
+                FutureWarning,
+                stacklevel=2,
+            )
+        return migrated
+
+    @field_validator("sample_rate")
+    @classmethod
+    def validate_sample_rate(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and v <= 0:
+            raise ValueError("sample_rate must be positive or null")
+        return v
 
     @model_validator(mode="after")
     def validate_backend_configs(self):

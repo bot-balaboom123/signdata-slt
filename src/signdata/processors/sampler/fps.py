@@ -1,13 +1,15 @@
 """FPS-based frame sampler."""
 
+from ...utils.video import resolve_effective_sample_fps
 from .base import BaseSampler
 
 
 class FPSSampler(BaseSampler):
-    """Downsample source FPS to target FPS using Bresenham-like accumulation."""
+    """Sample native, ratio-reduced, or absolute-FPS frames uniformly."""
 
-    def __init__(self, src_fps: float, target_fps: float):
-        self.target = min(target_fps, src_fps)
+    def __init__(self, src_fps: float, sample_rate: float | None):
+        effective_fps = resolve_effective_sample_fps(src_fps, sample_rate)
+        self.target = src_fps if effective_fps is None else min(effective_fps, src_fps)
         self.r = self.target / max(src_fps, 1e-6)
         self.acc = 0.0
 

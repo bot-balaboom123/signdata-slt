@@ -10,7 +10,7 @@ Example experiment YAML::
     jobs:
       - config: jobs/youtube_asl/mediapipe.yaml
         overrides:
-          processing.target_fps: null
+          processing.sample_rate: null
           normalize.mask_landmark_level: true
       - config: jobs/youtube_asl/mmpose.yaml
         overrides:
@@ -55,14 +55,14 @@ def _flatten_overrides(
 
         # Flat (dot-separated keys) — preferred
         overrides:
-          processing.target_fps: null
+          processing.sample_rate: null
 
         # Nested — also accepted
         overrides:
           processing:
-            target_fps: null
+            sample_rate: null
 
-    Both produce ``{"processing.target_fps": None}``.
+    Both produce ``{"processing.sample_rate": None}``.
     """
     result: Dict[str, Any] = {}
     for k, v in d.items():

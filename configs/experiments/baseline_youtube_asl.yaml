@@ -1,14 +1,13 @@
 name: "YouTube-ASL Baseline Reproduction"
 description: >
   Reproduce the YouTube-ASL baseline results using both MediaPipe and
-  MMPose extractors.  MediaPipe runs without target FPS resampling
+  MMPose extractors. MediaPipe runs at native FPS
   (as in the original paper); MMPose uses a second GPU.
 
 jobs:
   - config: datasets/youtube_asl/pose_mmpose.yaml
     overrides:
-      processing.target_fps: null
-      processing.frame_skip: 1
+      processing.sample_rate: null
       post_processing.normalize.mask_empty_frames: true
 
   - config: datasets/youtube_asl/pose_mmpose.yaml

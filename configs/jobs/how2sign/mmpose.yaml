@@ -11,8 +11,7 @@ processing:
   processor: video2pose
   detection: mmdet
   pose: mmpose
-  frame_skip: 2
-  target_fps: 24.0
+  sample_rate: 0.5
   max_workers: 1
   detection_config:
     det_model_config: resources/detection_models/rtmdet/configs/rtmdet_nano_320-8xb32_coco-person.py

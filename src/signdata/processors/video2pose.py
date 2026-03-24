@@ -47,7 +47,7 @@ class Video2PoseProcessor(BaseProcessor):
     """High-level processor: video → pose landmarks (.npy).
 
     Orchestrates:
-    - sampler for frame selection (frame_skip / target_fps)
+    - sampler for frame selection (native / ratio / absolute FPS)
     - detection/ backends for person detection
     - pose/ backends for pose estimation
     """
@@ -110,7 +110,7 @@ class Video2PoseProcessor(BaseProcessor):
                         continue
 
                     # Read sampled frames
-                    sampler = create_sampler(cfg.frame_skip, cfg.target_fps, src_fps)
+                    sampler = create_sampler(cfg.sample_rate, src_fps)
                     frames = read_sampled_frames(
                         video_path, start_sec, end_sec, sampler, src_fps,
                     )

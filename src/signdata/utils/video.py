@@ -32,35 +32,54 @@ def get_video_fps(video_path: str) -> float:
         return 0.0
 
 
-class FPSSampler:
-    """Frame sampling strategies for video processing.
+def resolve_effective_sample_fps(
+    src_fps: float,
+    sample_rate: Optional[float],
+) -> Optional[float]:
+    """Resolve a user-facing sample rate to an effective FPS.
 
-    Supports two sampling modes:
-      1) reduce mode (priority): Downsample source fps to target fps
-         Uses accumulation error method (Bresenham-like) for non-integer ratios
-      2) skip mode: Sample every Nth frame
+    Rules:
+      - ``None`` => native FPS (no resampling)
+      - ``0 < sample_rate < 1`` => keep that ratio of source frames
+      - ``sample_rate >= 1`` => downsample to that absolute FPS
     """
+    if sample_rate is None:
+        return None
 
-    def __init__(self, src_fps: float, reduce_to: Optional[float], frame_skip_by: int):
-        self.mode = "reduce" if (reduce_to is not None and src_fps > 0) else "skip"
+    if sample_rate <= 0:
+        raise ValueError("sample_rate must be positive or null")
 
-        if self.mode == "reduce":
-            self.target = min(reduce_to, src_fps)
-            self.r = self.target / max(src_fps, 1e-6)
-            self.acc = 0.0
+    if 0 < sample_rate < 1:
+        if src_fps <= 0:
+            return None
+        return src_fps * sample_rate
+
+    if src_fps > 0:
+        return min(sample_rate, src_fps)
+
+    return sample_rate
+
+
+class FPSSampler:
+    """Frame sampler using native, ratio, or absolute-FPS semantics."""
+
+    def __init__(self, src_fps: float, sample_rate: Optional[float]):
+        if sample_rate is None:
+            self.mode = "native"
+        elif 0 < sample_rate < 1:
+            self.mode = "ratio"
         else:
-            self.n = max(int(frame_skip_by), 1)
-            self.count = 0
+            self.mode = "fps"
+
+        effective_fps = resolve_effective_sample_fps(src_fps, sample_rate)
+        self.target = src_fps if effective_fps is None else effective_fps
+        self.r = 1.0 if src_fps <= 0 else (self.target / max(src_fps, 1e-6))
+        self.acc = 0.0
 
     def take(self) -> bool:
         """Returns True if current frame should be sampled."""
-        if self.mode == "reduce":
-            self.acc += self.r
-            if self.acc >= 1.0:
-                self.acc -= 1.0
-                return True
-            return False
-        else:
-            take_now = (self.count % self.n) == 0
-            self.count += 1
-            return take_now
+        self.acc += self.r
+        if self.acc >= 1.0:
+            self.acc -= 1.0
+            return True
+        return False

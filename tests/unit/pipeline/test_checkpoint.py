@@ -67,7 +67,7 @@ class TestComputeStageHash:
     def test_uses_registry_when_no_hash_fields(self):
         """When hash_fields is None, falls back to STAGE_HASH_FIELDS."""
         cfg = {"processing": {"processor": "video2pose", "detection": "null",
-                               "pose": "mediapipe", "frame_skip": 2}}
+                               "pose": "mediapipe", "sample_rate": 24.0}}
         h = compute_stage_hash(cfg, "processing")
         assert h.startswith("sha256:")
         # Same config should be deterministic

@@ -159,10 +159,15 @@ def validate_manifest(df: pd.DataFrame) -> List[str]:
 
     # Duplicate SAMPLE_ID
     if "SAMPLE_ID" in df.columns:
-        dup_count = df["SAMPLE_ID"].duplicated().sum()
+        dup_mask = df["SAMPLE_ID"].duplicated(keep=False)
+        dup_count = dup_mask.sum()
         if dup_count > 0:
+            dup_ids = sorted(df.loc[dup_mask, "SAMPLE_ID"].unique().tolist())
+            sample = dup_ids[:5]
             issues.append(
-                f"{dup_count} duplicate SAMPLE_ID values found."
+                f"{dup_count} duplicate SAMPLE_ID values found "
+                f"({len(dup_ids)} distinct IDs affected). "
+                f"First {len(sample)}: {sample}."
             )
 
     return issues

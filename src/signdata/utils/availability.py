@@ -33,7 +33,7 @@ def get_existing_video_ids(directory: str) -> Set[str]:
     ids: Set[str] = set()
     for ext in _VIDEO_EXTENSIONS:
         for f in glob(os.path.join(directory, f"*.{ext}")):
-            ids.add(os.path.splitext(os.path.basename(f))[0])
+            ids.add(Path(f).stem)
     return ids
 
 

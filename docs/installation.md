@@ -10,7 +10,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-This installs all dependencies needed for MediaPipe-based extraction, which works on CPU out of the box.
+This installs all dependencies needed for MediaPipe-based pose jobs, which work on CPU out of the box.
 
 ## MMPose (GPU Required)
 

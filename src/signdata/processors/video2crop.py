@@ -37,8 +37,7 @@ class Video2CropProcessor(BaseProcessor):
         # Create building blocks
         detector = create_detector(cfg.detection, cfg.detection_config)
         ffmpeg_params = FfmpegSamplingParams(
-            target_fps=cfg.target_fps,
-            frame_skip=cfg.frame_skip,
+            sample_rate=cfg.sample_rate,
         )
 
         # Load manifest
@@ -83,11 +82,8 @@ class Video2CropProcessor(BaseProcessor):
                         errors += 1
                         continue
 
-                    # Subsample frames for detection (frame_skip reduces compute)
-                    detect_frames = frames[::cfg.frame_skip] if cfg.frame_skip > 1 else frames
-
                     # Detect persons
-                    detections = detector.detect_batch(detect_frames)
+                    detections = detector.detect_batch(frames)
 
                     # Validate single person
                     if not single_person_check(detections):

@@ -60,7 +60,7 @@ class TestSchemaDefaults:
     def test_video_processing_defaults(self):
         cfg = VideoProcessingConfig()
         assert cfg.codec == "libx264"
-        assert cfg.padding == 0.25
+        assert cfg.padding == 0.0
         assert cfg.resize is None
 
     def test_paths_config_has_output_and_webdataset(self):

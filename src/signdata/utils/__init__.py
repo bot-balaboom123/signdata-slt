@@ -1,6 +1,11 @@
 """Shared utilities."""
 
-from .video import FPSSampler, validate_video_file, get_video_fps
+from .video import (
+    FPSSampler,
+    validate_video_file,
+    get_video_fps,
+    resolve_effective_sample_fps,
+)
 from .files import get_video_filenames, get_filenames
 from .text import normalize_text
 from .manifest import (
@@ -29,6 +34,7 @@ __all__ = [
     "FPSSampler",
     "validate_video_file",
     "get_video_fps",
+    "resolve_effective_sample_fps",
     "get_video_filenames",
     "get_filenames",
     "normalize_text",

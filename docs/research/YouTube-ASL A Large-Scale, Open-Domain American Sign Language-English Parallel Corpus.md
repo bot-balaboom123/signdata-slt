@@ -102,8 +102,7 @@ That config is aligned with the paper where the current config system exposes a 
 
 - It runs the MediaPipe job at [`configs/jobs/youtube_asl/mediapipe.yaml`](../../configs/jobs/youtube_asl/mediapipe.yaml)
 - It keeps the 85-keypoint landmark subset
-- It uses `target_fps: null` with `frame_skip: 2` to match "discard every second frame"
-- It uses `accept_fps_range: [15.0, 60.0]`
+- It uses `sample_rate: 0.5` to match "discard every second frame"
 - It keeps `missing_value: -999.0` for missing landmarks
 - It sets `mask_low_confidence: true` and `visibility_threshold: 0.0` so missing all-zero landmarks are masked while MediaPipe visibility scores are otherwise ignored
 

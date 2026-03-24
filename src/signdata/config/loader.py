@@ -2,6 +2,7 @@
 
 import copy
 import os
+import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -234,11 +235,15 @@ def load_config(
             if "=" not in override:
                 raise ValueError(f"Override must be key=value, got: {override}")
             key, value = override.split("=", 1)
-            _set_nested(raw, key, _parse_value(value))
+            key, parsed_value = _normalize_legacy_sampling_override(
+                key, _parse_value(value),
+            )
+            _set_nested(raw, key, parsed_value)
 
     # Apply dict overrides (from experiment layer — values already typed)
     if dict_overrides:
         for key, value in dict_overrides.items():
+            key, value = _normalize_legacy_sampling_override(key, value)
             _set_nested(raw, key, value)
 
     # Validate required fields
@@ -276,6 +281,35 @@ def _set_nested(d: Dict, key: str, value: Any) -> None:
     for part in parts[:-1]:
         d = d.setdefault(part, {})
     d[parts[-1]] = value
+
+
+def _normalize_legacy_sampling_override(key: str, value: Any) -> tuple[str, Any]:
+    """Translate legacy sampling override keys to sample_rate with warnings."""
+    if key == "processing.frame_skip":
+        frame_skip = int(value)
+        if frame_skip <= 0:
+            raise ValueError("processing.frame_skip must be a positive integer")
+        sample_rate = None if frame_skip == 1 else (1.0 / frame_skip)
+        warnings.warn(
+            "processing.frame_skip is deprecated and was mapped to "
+            f"processing.sample_rate={sample_rate!r}.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        return "processing.sample_rate", sample_rate
+
+    if key == "processing.target_fps":
+        if value is not None and value <= 0:
+            raise ValueError("processing.target_fps must be positive or null")
+        warnings.warn(
+            "processing.target_fps is deprecated and was mapped to "
+            f"processing.sample_rate={value!r}.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        return "processing.sample_rate", value
+
+    return key, value
 
 
 def _parse_value(value: str) -> Any:

@@ -1,99 +1,150 @@
 # Pipeline Stages
 
-The pipeline runner dispatches to the processor specified by
-`config.processing.processor`. Supported processors:
+`PipelineRunner` executes the pipeline in fixed order:
 
-- `video2pose` — video → pose landmarks (.npy)
-- `video2crop` — video → cropped video (.mp4)
-
-Additional registered stages (`clip_video`, `window_video`, `obfuscate`) can be
-used standalone but are not part of the main processing dispatch.
+1. `dataset.download`
+2. `dataset.manifest`
+3. `processing.<processor>`
+4. `post_processing.<recipe>`
+5. `output.<type>`
 
 ## Stage Summary
 
 | Stage | Output | Activation |
 |---|---|---|
-| `acquire` | videos and transcripts, or validation of local data | always |
-| `manifest` | base manifest CSV | always |
-| `window_video` | derived manifest with windowed rows | `stage_config.window_video` |
-| `clip_video` | sentence or window clips in `paths.clips` | manifest has timing |
-| `obfuscate` | obfuscated videos in `{root}/obfuscated/{run_name}` | `stage_config.obfuscate` |
-| `webdataset` | shards in `paths.webdataset` | always |
+| `dataset.download` | videos and transcripts, or validation of local data | `dataset.download: true` |
+| `dataset.manifest` | manifest TSV/CSV at `paths.manifest` | `dataset.manifest: true` |
+| `processing.video2pose` | raw landmarks at `{paths.output}/{run_name}/raw/{sample_id}.npy` | `processing.enabled: true` and `processing.processor: video2pose` |
+| `processing.video2crop` | cropped clips at `{paths.output}/{run_name}/raw/{sample_id}.mp4` | `processing.enabled: true` and `processing.processor: video2crop` |
+| `post_processing.normalize` | normalized landmarks at `{paths.output}/{run_name}/normalized/{sample_id}.npy` | `post_processing.enabled: true` and `normalize` in `post_processing.recipes` |
+| `output.webdataset` | shards at `{paths.webdataset}/{run_name}/shard-000000.tar` | `output.enabled: true` and `output.type: webdataset` |
 
-## `acquire`
+If `dataset.manifest` is `false` and `paths.manifest` is set, the runner loads
+the existing manifest before continuing to downstream stages.
+
+## `dataset.download`
 
 Handles dataset acquisition.
 
-- YouTube-ASL reads `source.video_ids_file`, downloads videos into `paths.videos`, and downloads transcript JSON into `paths.transcripts`.
+- YouTube-ASL reads `dataset.source.video_ids_file`, downloads videos into `paths.videos`, and downloads transcript JSON into `paths.transcripts`.
 - How2Sign does not download data; it validates that local inputs exist.
 
 Key config paths:
 
-- `source.video_ids_file`
-- `source.download_format`
-- `source.languages`
-- `source.rate_limit`
-- `source.concurrent_fragments`
+- `dataset.source.video_ids_file`
+- `dataset.source.download_format`
+- `dataset.source.languages`
+- `dataset.source.rate_limit`
+- `dataset.source.concurrent_fragments`
 
-## `manifest`
+## `dataset.manifest`
 
 Builds or loads the base manifest.
 
 - YouTube-ASL parses transcript JSON into a manifest.
-- How2Sign loads an existing CSV from `paths.manifest` or `source.manifest_csv`.
+- How2Sign loads an existing CSV from `paths.manifest` or `dataset.source.manifest_csv`.
 
 Key config paths:
 
-- `source.max_text_length`
-- `source.min_duration`
-- `source.max_duration`
+- `dataset.source.max_text_length`
+- `dataset.source.min_duration`
+- `dataset.source.max_duration`
 - `paths.manifest`
 
-## `window_video`
+## `processing.video2pose`
 
-Creates a metadata-only derived manifest at:
+Reads source videos, samples frames, optionally runs person detection, then
+writes landmark arrays into:
 
 ```text
-{paths.root}/window_video/{run_name}/manifest.csv
+{paths.output}/{run_name}/raw/{sample_id}.npy
 ```
 
-It does not create video files. Downstream `clip_video` uses the windowed
-manifest.
+Supporting modules live in:
 
-## `clip_video`
+- `src/signdata/processors/sampler/`
+- `src/signdata/processors/detection/`
+- `src/signdata/processors/pose/`
 
-Creates physical clips in:
+`processing.sample_rate` controls frame selection:
+
+- `null` keeps native FPS
+- `0 < value < 1` keeps that fraction of frames uniformly
+- `value >= 1` downsamples to that FPS without upsampling low-FPS sources
+
+Key config paths:
+
+- `processing.detection`
+- `processing.detection_config`
+- `processing.pose`
+- `processing.pose_config`
+- `processing.sample_rate`
+
+## `processing.video2crop`
+
+Runs a two-pass ffmpeg crop pipeline:
+
+1. decode frames for detection
+2. compute a union bbox
+3. clip and crop the source segment into:
 
 ```text
-{paths.clips}/{sample_id}.mp4
+{paths.output}/{run_name}/raw/{sample_id}.mp4
+```
+
+The shared ffmpeg helpers live in `src/signdata/processors/video/ffmpeg.py`.
+
+`processing.sample_rate` controls both ffmpeg decode cadence and output clip
+FPS:
+
+- `null` keeps native FPS
+- `0 < value < 1` keeps that fraction of frames uniformly
+- `value >= 1` downsamples to that FPS without upsampling low-FPS sources
+
+Key config paths:
+
+- `processing.detection`
+- `processing.detection_config`
+- `processing.video_config.codec`
+- `processing.video_config.padding`
+- `processing.video_config.resize`
+- `processing.sample_rate`
+
+## `post_processing.normalize`
+
+Reads raw landmark arrays from:
+
+```text
+{paths.output}/{run_name}/raw/{sample_id}.npy
+```
+
+and writes normalized arrays to:
+
+```text
+{paths.output}/{run_name}/normalized/{sample_id}.npy
 ```
 
 Key config paths:
 
-- `clip_video.codec`
-- `clip_video.resize`
+- `post_processing.normalize.mode`
+- `post_processing.normalize.remove_z`
+- `post_processing.normalize.keypoint_preset`
+- `post_processing.normalize.keypoint_indices`
+- `post_processing.normalize.mask_empty_frames`
+- `post_processing.normalize.mask_low_confidence`
+- `post_processing.normalize.visibility_threshold`
+- `post_processing.normalize.missing_value`
 
-## `obfuscate`
+## `output.webdataset`
 
-Reads videos from the current routed `video_dir` and writes obfuscated outputs
-into:
-
-```text
-{paths.root}/obfuscated/{run_name}/{file_id}.mp4
-```
-
-Configured through `stage_config.obfuscate`.
-
-## `webdataset`
-
-Packages the current manifest plus the active artifact directory into shards:
+Packages the manifest plus the active artifact directory into shards:
 
 ```text
-{paths.webdataset}/shard-000000.tar
+{paths.webdataset}/{run_name}/shard-000000.tar
 ```
 
-- Pose jobs package normalized `.npy` files.
-- Video jobs package the current `.mp4` files.
+- `video2pose` packages normalized `.npy` files when present, otherwise raw `.npy`.
+- `video2crop` packages raw `.mp4` files from `{paths.output}/{run_name}/raw/`.
 
 ## See Also
 

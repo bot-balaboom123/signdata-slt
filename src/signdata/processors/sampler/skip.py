@@ -4,10 +4,10 @@ from .base import BaseSampler
 
 
 class SkipSampler(BaseSampler):
-    """Sample every Nth frame (simple frame skipping)."""
+    """Sample every Nth frame (simple strided sampling)."""
 
-    def __init__(self, frame_skip: int):
-        self.n = max(int(frame_skip), 1)
+    def __init__(self, stride: int):
+        self.n = max(int(stride), 1)
         self.count = 0
 
     def take(self) -> bool:

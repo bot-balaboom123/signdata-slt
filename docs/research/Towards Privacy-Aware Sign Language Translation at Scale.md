@@ -70,9 +70,9 @@ The experiment config is:
 
 This config intentionally does the following:
 
-- Switch from pose extraction to `video` mode
+- Switch from pose extraction to the `video2crop` processor
 - Use the default `paths.videos` directory — place your pre-blurred videos there (the pipeline has no built-in face-blurring processor)
-- Keep all frames during preprocessing by setting `target_fps: null` and `frame_skip: 1`
+- Keep all frames during preprocessing by setting `sample_rate: null`
 - Re-encode clipped segments with `libx264` so sentence boundaries are preserved more faithfully than keyframe-only copy clipping
 - Package the resulting clips as WebDataset shards for downstream training
 

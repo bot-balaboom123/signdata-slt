@@ -8,14 +8,15 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
+from ...utils.video import resolve_effective_sample_fps
+
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class FfmpegSamplingParams:
     """Shared ffmpeg parameters for consistent frame decoding across passes."""
-    target_fps: Optional[float] = None
-    frame_skip: int = 2
+    sample_rate: Optional[float] = 0.5
 
 
 def ffmpeg_pipe_frames(
@@ -45,15 +46,23 @@ def ffmpeg_pipe_frames(
     import cv2
 
     # Auto-detect dimensions if not provided
+    source_fps = 0.0
     if width == 0 or height == 0:
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             return []
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        source_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
         cap.release()
+    else:
+        cap = cv2.VideoCapture(video_path)
+        if cap.isOpened():
+            source_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+            cap.release()
 
     duration = end_sec - start_sec
+    effective_fps = resolve_effective_sample_fps(source_fps, params.sample_rate)
 
     # Build ffmpeg command
     cmd = [
@@ -65,8 +74,8 @@ def ffmpeg_pipe_frames(
 
     # Apply FPS filter
     vf_filters = []
-    if params.target_fps:
-        vf_filters.append(f"fps={params.target_fps}")
+    if effective_fps is not None:
+        vf_filters.append(f"fps={effective_fps}")
 
     if vf_filters:
         cmd.extend(["-vf", ",".join(vf_filters)])
@@ -147,16 +156,19 @@ def clip_and_crop(
         return False
     frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    source_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
     cap.release()
 
     # Apply padding
-    padding = getattr(video_config, "padding", 0.25)
+    padding = getattr(video_config, "padding", 0.0)
     x1, y1, x2, y2 = apply_bbox_padding(bbox, padding, frame_w, frame_h)
     crop_w = x2 - x1
     crop_h = y2 - y1
 
     if crop_w <= 0 or crop_h <= 0:
         return False
+
+    effective_fps = resolve_effective_sample_fps(source_fps, params.sample_rate)
 
     # Build ffmpeg command
     cmd = [
@@ -167,8 +179,8 @@ def clip_and_crop(
     ]
 
     vf_filters = []
-    if params.target_fps:
-        vf_filters.append(f"fps={params.target_fps}")
+    if effective_fps is not None:
+        vf_filters.append(f"fps={effective_fps}")
     vf_filters.append(f"crop={crop_w}:{crop_h}:{x1}:{y1}")
 
     resize = getattr(video_config, "resize", None)
