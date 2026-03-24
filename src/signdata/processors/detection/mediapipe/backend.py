@@ -5,7 +5,7 @@ from typing import List
 
 import numpy as np
 
-from .backends import Detection, PersonDetector
+from ..base import Detection, PersonDetector
 
 logger = logging.getLogger(__name__)
 
@@ -60,3 +60,6 @@ class MediaPipeDetector(PersonDetector):
 
     def close(self) -> None:
         self.detector.close()
+
+
+__all__ = ["MediaPipeDetector"]

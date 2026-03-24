@@ -1,4 +1,4 @@
-"""Tests for normalization math (processors/pose/normalize.py helper functions).
+"""Tests for normalization math in the canonical post-processor module.
 
 This is the most important test file — covers core numerical logic.
 """
@@ -6,7 +6,7 @@ This is the most important test file — covers core numerical logic.
 import numpy as np
 import pytest
 
-from signdata.processors.pose.normalize import (
+from signdata.post_processors.normalize import (
     _apply_keypoint_reduction,
     _apply_visibility_mask,
     _normalize_clip_xyz,

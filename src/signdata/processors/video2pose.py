@@ -11,8 +11,8 @@ import numpy as np
 
 from .base import BaseProcessor
 from .detection import create_detector, single_person_check
+from .pose import create_estimator, LandmarkExtractor
 from .sampler import create_sampler, read_sampled_frames
-from ..pose.base import create_estimator, LandmarkExtractor
 from ..registry import register_processor
 from ..utils.manifest import get_timing_columns, resolve_video_path
 

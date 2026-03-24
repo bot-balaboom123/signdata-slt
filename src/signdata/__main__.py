@@ -35,7 +35,7 @@ def main():
     if args.command == "run":
         # Handle --list-presets early exit (no config file needed)
         if args.list_presets:
-            from signdata.pose.presets import list_presets
+            from signdata.processors.pose import list_presets
             for name, desc in sorted(list_presets().items()):
                 print(f"  {name:30s} {desc}")
             return

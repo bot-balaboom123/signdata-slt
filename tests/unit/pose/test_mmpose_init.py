@@ -3,7 +3,7 @@
 Only tests __init__ parameter handling — no GPU, mmpose, or real frames needed.
 """
 
-from signdata.pose.mmpose import MMPoseExtractor
+from signdata.processors.pose.mmpose import MMPoseExtractor
 
 
 class TestMMPoseInit:

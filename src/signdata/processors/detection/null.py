@@ -4,7 +4,7 @@ from typing import List
 
 import numpy as np
 
-from .backends import Detection, PersonDetector
+from .base import Detection, PersonDetector
 
 
 class NullDetector(PersonDetector):

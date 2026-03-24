@@ -1,9 +1,97 @@
-"""Base class for landmark extractors."""
+"""Pose extractors, factory helpers, and keypoint presets."""
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
+
+
+MEDIAPIPE_543_TO_83 = {
+    "description": (
+        "MediaPipe unrefined: 6 pose + 35 face + 21 left hand + 21 right hand"
+    ),
+    "source_keypoints": 543,
+    "target_keypoints": 83,
+    "indices": (
+        [11, 12, 13, 14, 23, 24]
+        + [
+            33, 37, 46, 47, 50, 66, 70, 72, 79, 85, 88, 94, 97,
+            114, 115, 126, 166, 184, 185, 192, 205, 211, 214,
+            296, 302, 309, 315, 318, 324, 327, 344, 356,
+            395, 419, 430,
+        ]
+        + list(range(501, 522))
+        + list(range(522, 543))
+    ),
+}
+
+MEDIAPIPE_553_TO_85 = {
+    "description": (
+        "MediaPipe refined: 6 pose + 37 face + 21 left hand + 21 right hand"
+    ),
+    "source_keypoints": 553,
+    "target_keypoints": 85,
+    "indices": (
+        [11, 12, 13, 14, 23, 24]
+        + [
+            33, 37, 46, 47, 50, 66, 70, 72, 79, 85, 88, 94, 97,
+            114, 115, 126, 166, 184, 185, 192, 205, 211, 214,
+            296, 302, 309, 315, 318, 324, 327, 344, 356,
+            395, 419, 430, 501, 506,
+        ]
+        + list(range(511, 532))
+        + list(range(532, 553))
+    ),
+}
+
+MMPOSE_133_TO_85 = {
+    "description": (
+        "COCO WholeBody 133 to 85 selected upper body, face, and hand keypoints"
+    ),
+    "source_keypoints": 133,
+    "target_keypoints": 85,
+    "indices": (
+        [5, 6, 7, 8, 11, 12]
+        + [23, 25, 27, 29, 31, 33, 35, 37, 39]
+        + [40, 41, 42, 43, 44, 45, 46, 47, 48, 49]
+        + [52, 54, 56, 58]
+        + [71, 73, 75, 77, 79, 81, 83, 84, 85, 86, 87, 88, 89, 90]
+        + list(range(91, 133))
+    ),
+}
+
+KEYPOINT_PRESETS: Dict[str, dict] = {
+    "mediapipe_553_to_85": MEDIAPIPE_553_TO_85,
+    "mediapipe_543_to_83": MEDIAPIPE_543_TO_83,
+    "mmpose_133_to_85": MMPOSE_133_TO_85,
+}
+
+
+def resolve_keypoint_indices(
+    preset_name: Optional[str] = None,
+    manual_indices: Optional[List[int]] = None,
+) -> Optional[List[int]]:
+    """Resolve keypoint indices from a preset name or manual list."""
+    if preset_name is not None:
+        if preset_name not in KEYPOINT_PRESETS:
+            raise ValueError(
+                f"Unknown keypoint preset '{preset_name}'. "
+                f"Available: {sorted(KEYPOINT_PRESETS.keys())}"
+            )
+        return list(KEYPOINT_PRESETS[preset_name]["indices"])
+
+    if manual_indices is not None:
+        return list(manual_indices)
+
+    return None
+
+
+def list_presets() -> Dict[str, str]:
+    """Return a mapping of preset names to their descriptions."""
+    return {
+        name: info["description"]
+        for name, info in KEYPOINT_PRESETS.items()
+    }
 
 
 class LandmarkExtractor(ABC):
@@ -88,11 +176,14 @@ def create_estimator(pose_type: str, pose_config) -> LandmarkExtractor:
     if pose_type == "mediapipe":
         from .mediapipe import MediaPipeExtractor
 
-        # Bridge new config to legacy ExtractorConfig expected by MediaPipeExtractor
-        from ..config.schema import MediaPipePoseConfig
-        cfg = pose_config if isinstance(pose_config, MediaPipePoseConfig) else MediaPipePoseConfig(**pose_config)
+        from ...config.schema import MediaPipePoseConfig
 
-        # MediaPipeExtractor expects an ExtractorConfig-like object
+        cfg = (
+            pose_config
+            if isinstance(pose_config, MediaPipePoseConfig)
+            else MediaPipePoseConfig(**pose_config)
+        )
+
         class _Cfg:
             name = "mediapipe"
             model_complexity = cfg.model_complexity
@@ -129,3 +220,12 @@ def create_estimator(pose_type: str, pose_config) -> LandmarkExtractor:
 
     else:
         raise ValueError(f"Unknown pose type: {pose_type!r}")
+
+
+__all__ = [
+    "KEYPOINT_PRESETS",
+    "LandmarkExtractor",
+    "create_estimator",
+    "list_presets",
+    "resolve_keypoint_indices",
+]

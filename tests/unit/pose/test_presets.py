@@ -1,8 +1,8 @@
-"""Tests for signdata.pose.presets — keypoint reduction presets."""
+"""Tests for the canonical pose keypoint preset registry."""
 
 import pytest
 
-from signdata.pose.presets import (
+from signdata.processors.pose import (
     KEYPOINT_PRESETS,
     list_presets,
     resolve_keypoint_indices,

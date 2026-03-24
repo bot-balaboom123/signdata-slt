@@ -5,7 +5,7 @@ from typing import List
 
 import numpy as np
 
-from .backends import Detection, PersonDetector
+from ..base import Detection, PersonDetector
 
 logger = logging.getLogger(__name__)
 
@@ -78,3 +78,6 @@ class YOLODetector(PersonDetector):
 
     def close(self) -> None:
         del self.model
+
+
+__all__ = ["YOLO", "YOLODetector"]

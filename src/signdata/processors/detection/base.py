@@ -46,15 +46,21 @@ def create_detector(detection_type: str, detection_config) -> PersonDetector:
     """
     if detection_type == "null":
         from .null import NullDetector
+
         return NullDetector()
-    elif detection_type == "yolo":
+    if detection_type == "yolo":
         from .yolo import YOLODetector
+
         return YOLODetector(detection_config)
-    elif detection_type == "mmdet":
+    if detection_type == "mmdet":
         from .mmdet import MMDetDetector
+
         return MMDetDetector(detection_config)
-    elif detection_type == "mediapipe":
+    if detection_type == "mediapipe":
         from .mediapipe import MediaPipeDetector
+
         return MediaPipeDetector(detection_config)
-    else:
-        raise ValueError(f"Unknown detection type: {detection_type!r}")
+    raise ValueError(f"Unknown detection type: {detection_type!r}")
+
+
+__all__ = ["Detection", "PersonDetector", "create_detector"]

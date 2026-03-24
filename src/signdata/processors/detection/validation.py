@@ -2,7 +2,7 @@
 
 from typing import List, Optional, Tuple
 
-from .backends import Detection
+from .base import Detection
 
 
 def single_person_check(detections: List[List[Detection]]) -> bool:
@@ -46,6 +46,17 @@ def union_bboxes(
     return (x1, y1, x2, y2)
 
 
+def union_bbox_tuples(
+    bboxes: List[Tuple[float, float, float, float]],
+) -> Tuple[float, float, float, float]:
+    """Compute the enclosing bounding box from raw bbox tuples."""
+    x1 = min(b[0] for b in bboxes)
+    y1 = min(b[1] for b in bboxes)
+    x2 = max(b[2] for b in bboxes)
+    y2 = max(b[3] for b in bboxes)
+    return (x1, y1, x2, y2)
+
+
 def apply_bbox_padding(
     bbox: Tuple[float, float, float, float],
     padding: float,
@@ -75,3 +86,11 @@ def apply_bbox_padding(
     y2 = min(frame_height, int(y2 + pad_y))
 
     return (x1, y1, x2, y2)
+
+
+__all__ = [
+    "single_person_check",
+    "union_bboxes",
+    "union_bbox_tuples",
+    "apply_bbox_padding",
+]
