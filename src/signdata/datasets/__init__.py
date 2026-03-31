@@ -5,7 +5,7 @@ import pkgutil
 
 from .base import DatasetAdapter, BaseDataset
 
-# Auto-discover and import all dataset modules to trigger @register_dataset.
+# Auto-discover and import all dataset packages/modules to trigger @register_dataset.
 for _, _module_name, _ in pkgutil.iter_modules(__path__):
     if _module_name != "base" and not _module_name.startswith("_"):
         importlib.import_module(f".{_module_name}", __package__)
