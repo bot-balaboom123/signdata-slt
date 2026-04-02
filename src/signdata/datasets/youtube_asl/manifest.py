@@ -11,8 +11,8 @@ from typing import Dict, List, Optional
 import pandas as pd
 from tqdm import tqdm
 
-from .._shared.availability import apply_availability_policy
-from ...utils.text import normalize_text
+from .._ingestion.availability import apply_availability_policy
+from .._ingestion.text import normalize_text
 from .source import YouTubeASLSourceConfig
 
 

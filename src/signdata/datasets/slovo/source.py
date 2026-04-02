@@ -7,7 +7,7 @@ from typing import List
 import pandas as pd
 from pydantic import BaseModel
 
-from .._shared.availability import AvailabilityPolicy
+from .._ingestion.availability import AvailabilityPolicy
 
 # Bundled class map shipped with the package (assets/slovo_class_map.tsv)
 _BUNDLED_CLASS_MAP = (

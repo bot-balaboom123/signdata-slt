@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from .._shared.availability import apply_availability_policy
-from ...utils.text import normalize_text
+from .._ingestion.availability import apply_availability_policy
+from .._ingestion.text import normalize_text
 from .source import OpenASLSourceConfig
 
 

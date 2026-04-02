@@ -7,7 +7,7 @@ from typing import List, Optional
 
 import pandas as pd
 
-from .._shared.availability import apply_availability_policy_paths
+from .._ingestion.availability import apply_availability_policy_paths
 from .source import (
     ALL_SPLITS,
     RWTHPhoenixWeatherSourceConfig,

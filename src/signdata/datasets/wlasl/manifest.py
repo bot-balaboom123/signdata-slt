@@ -8,8 +8,8 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from .._shared.availability import apply_availability_policy
-from .._shared.media import get_video_duration
+from .._ingestion.availability import apply_availability_policy
+from .._ingestion.media import get_video_duration
 from .source import WLASLSourceConfig
 
 

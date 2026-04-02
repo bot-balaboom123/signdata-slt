@@ -7,8 +7,8 @@ from typing import List, Optional, Tuple
 import pandas as pd
 from pydantic import BaseModel
 
-from .._shared.availability import AvailabilityPolicy
-from .._shared.media import materialize_frames_to_video
+from .._ingestion.availability import AvailabilityPolicy
+from .._ingestion.media import materialize_frames_to_video
 
 ALL_SPLITS = ("train", "dev", "test")
 

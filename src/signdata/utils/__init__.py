@@ -1,16 +1,16 @@
-"""Shared utilities for the processing pipeline.
+"""Pipeline utilities shared across processors, output, and runner.
 
-Dataset-ingestion helpers (download, class maps, frame materialisation,
-availability checks) live in ``signdata.datasets._shared``.
+Dataset-ingestion helpers (download, class maps, text normalization,
+availability enforcement) live in ``signdata.datasets._ingestion``.
 """
 
 from .video import (
     FPSSampler,
     validate_video_file,
     resolve_effective_sample_fps,
+    get_video_filenames,
+    get_filenames,
 )
-from .files import get_video_filenames, get_filenames
-from .text import normalize_text
 from .manifest import (
     read_manifest,
     validate_manifest,
@@ -36,7 +36,6 @@ __all__ = [
     "resolve_effective_sample_fps",
     "get_video_filenames",
     "get_filenames",
-    "normalize_text",
     "read_manifest",
     "validate_manifest",
     "has_timing",

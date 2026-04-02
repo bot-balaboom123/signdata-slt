@@ -13,7 +13,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from signdata.datasets._shared.availability import (
+from signdata.datasets._ingestion.availability import (
     apply_availability_policy,
     get_existing_video_ids,
     write_acquire_report,

@@ -2,7 +2,7 @@
 
 Dataset-ingestion helpers (apply_availability_policy, get_existing_video_ids,
 write_acquire_report, apply_availability_policy_paths) have moved to
-``signdata.datasets._shared.availability``.
+``signdata.datasets._ingestion.availability``.
 
 This module retains:
   - ``AvailabilityPolicy`` — shared type used by both layers

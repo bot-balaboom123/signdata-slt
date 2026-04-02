@@ -8,13 +8,13 @@ from typing import Dict, List
 import pandas as pd
 from pydantic import BaseModel
 
-from .._shared.availability import (
+from .._ingestion.availability import (
     AvailabilityPolicy,
     get_existing_video_ids,
     write_acquire_report,
 )
-from .._shared.youtube import download_youtube_videos
-from ...utils.text import TextProcessingConfig
+from .._ingestion.text import TextProcessingConfig
+from .._ingestion.youtube import download_youtube_videos
 
 
 class OpenASLSourceConfig(BaseModel):

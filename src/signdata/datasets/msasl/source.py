@@ -9,12 +9,12 @@ from typing import Dict, List
 
 from pydantic import BaseModel
 
-from .._shared.availability import (
+from .._ingestion.availability import (
     AvailabilityPolicy,
     get_existing_video_ids,
     write_acquire_report,
 )
-from .._shared.youtube import download_youtube_videos
+from .._ingestion.youtube import download_youtube_videos
 
 SPLITS = ("train", "val", "test")
 

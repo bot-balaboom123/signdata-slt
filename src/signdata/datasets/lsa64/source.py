@@ -7,8 +7,8 @@ from typing import List, Optional
 import pandas as pd
 from pydantic import BaseModel
 
-from .._shared.availability import AvailabilityPolicy
-from .._shared.classmap import load_class_map
+from .._ingestion.availability import AvailabilityPolicy
+from .._ingestion.classmap import load_class_map
 
 _BUNDLED_CLASS_MAP = (
     Path(__file__).parent.parent.parent.parent.parent / "assets" / "lsa64_class_map.tsv"

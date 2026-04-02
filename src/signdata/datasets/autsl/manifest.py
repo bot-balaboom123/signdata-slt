@@ -7,8 +7,8 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-from .._shared.availability import apply_availability_policy_paths
-from .._shared.media import get_video_duration, get_video_fps
+from .._ingestion.availability import apply_availability_policy_paths
+from .._ingestion.media import get_video_duration, get_video_fps
 from .source import (
     AUTSLSourceConfig,
     MODALITY_SUFFIX,

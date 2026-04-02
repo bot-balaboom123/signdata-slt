@@ -1,12 +1,13 @@
 """Video processing utilities for the pipeline.
 
 Duration/FPS probing for dataset ingestion has moved to
-``signdata.datasets._shared.media``.
+``signdata.datasets._ingestion.media``.
 """
 
 import logging
 import os
-from typing import Optional
+from glob import glob
+from typing import List, Optional
 
 import cv2
 
@@ -77,3 +78,19 @@ class FPSSampler:
             self.acc -= 1.0
             return True
         return False
+
+
+def get_video_filenames(directory: str, pattern: str = "*.mp4") -> List[str]:
+    """Retrieve video stems from a directory matching *pattern*."""
+    return [
+        os.path.splitext(os.path.basename(f))[0]
+        for f in glob(os.path.join(directory, pattern))
+    ]
+
+
+def get_filenames(directory: str, pattern: str, extension: str) -> List[str]:
+    """Retrieve file stems from *directory* matching ``<pattern>.<extension>``."""
+    return [
+        os.path.splitext(os.path.basename(f))[0]
+        for f in glob(os.path.join(directory, f"{pattern}.{extension}"))
+    ]

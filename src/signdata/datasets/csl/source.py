@@ -6,7 +6,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from .._shared.availability import AvailabilityPolicy
+from .._ingestion.availability import AvailabilityPolicy
 
 # Split-I: signer-independent boundary
 SPLIT_I_TRAIN_SIGNERS = set(range(1, 41))

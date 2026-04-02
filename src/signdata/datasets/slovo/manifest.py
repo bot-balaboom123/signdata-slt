@@ -7,9 +7,9 @@ from typing import List
 
 import pandas as pd
 
-from .._shared.availability import apply_availability_policy_paths
-from .._shared.classmap import load_class_map
-from .._shared.media import get_video_duration, get_video_fps
+from .._ingestion.availability import apply_availability_policy_paths
+from .._ingestion.classmap import load_class_map
+from .._ingestion.media import get_video_duration, get_video_fps
 from .source import (
     OPTIONAL_PASSTHROUGH,
     REQUIRED_COLUMNS,

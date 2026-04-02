@@ -7,7 +7,7 @@ from typing import Dict, List
 
 import pandas as pd
 
-from .._shared.availability import apply_availability_policy
+from .._ingestion.availability import apply_availability_policy
 from .source import MSASLSourceConfig, SPLITS, extract_video_id, load_split_json
 
 

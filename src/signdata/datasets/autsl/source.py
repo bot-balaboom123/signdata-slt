@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 from pydantic import BaseModel
 
-from .._shared.availability import AvailabilityPolicy
+from .._ingestion.availability import AvailabilityPolicy
 
 # Modality suffix appended to the base sample key in filenames.
 MODALITY_SUFFIX: Dict[str, str] = {
