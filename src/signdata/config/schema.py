@@ -13,12 +13,14 @@ class YOLODetectionConfig(BaseModel):
     device: str = "cpu"
     confidence_threshold: float = 0.5
     min_bbox_area: float = 0.05
+    batch_size: int = Field(default=16, gt=0)
 
 
 class MMDetDetectionConfig(BaseModel):
     det_model_config: str
     det_model_checkpoint: str
     device: str = "cuda:0"
+    batch_size: int = Field(default=16, gt=0)
 
 
 class MediaPipeDetectionConfig(BaseModel):

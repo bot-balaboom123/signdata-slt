@@ -38,41 +38,45 @@ class YOLODetector(PersonDetector):
         if not frames:
             return []
 
-        results = self.model(frames, verbose=False)
+        batch_size = self.config.batch_size
         all_detections: List[List[Detection]] = []
 
-        for i, result in enumerate(results):
-            h, w = frames[i].shape[:2]
-            frame_area = float(w * h)
-            frame_dets = []
+        for start in range(0, len(frames), batch_size):
+            chunk = frames[start : start + batch_size]
+            results = self.model(chunk, verbose=False)
 
-            boxes = result.boxes
-            if boxes is None or len(boxes) == 0:
+            for i, result in enumerate(results):
+                h, w = chunk[i].shape[:2]
+                frame_area = float(w * h)
+                frame_dets = []
+
+                boxes = result.boxes
+                if boxes is None or len(boxes) == 0:
+                    all_detections.append(frame_dets)
+                    continue
+
+                class_ids = boxes.cls.cpu().numpy()
+                confidences = boxes.conf.cpu().numpy()
+                xyxy = boxes.xyxy.cpu().numpy()
+
+                for j in range(len(class_ids)):
+                    if int(class_ids[j]) != 0:  # person class only
+                        continue
+                    conf = float(confidences[j])
+                    if conf < self.config.confidence_threshold:
+                        continue
+
+                    x1, y1, x2, y2 = xyxy[j]
+                    bbox_area = (x2 - x1) * (y2 - y1)
+                    if frame_area > 0 and (bbox_area / frame_area) < self.config.min_bbox_area:
+                        continue
+
+                    frame_dets.append(Detection(
+                        bbox=(float(x1), float(y1), float(x2), float(y2)),
+                        confidence=conf,
+                    ))
+
                 all_detections.append(frame_dets)
-                continue
-
-            class_ids = boxes.cls.cpu().numpy()
-            confidences = boxes.conf.cpu().numpy()
-            xyxy = boxes.xyxy.cpu().numpy()
-
-            for j in range(len(class_ids)):
-                if int(class_ids[j]) != 0:  # person class only
-                    continue
-                conf = float(confidences[j])
-                if conf < self.config.confidence_threshold:
-                    continue
-
-                x1, y1, x2, y2 = xyxy[j]
-                bbox_area = (x2 - x1) * (y2 - y1)
-                if frame_area > 0 and (bbox_area / frame_area) < self.config.min_bbox_area:
-                    continue
-
-                frame_dets.append(Detection(
-                    bbox=(float(x1), float(y1), float(x2), float(y2)),
-                    confidence=conf,
-                ))
-
-            all_detections.append(frame_dets)
 
         return all_detections
 
