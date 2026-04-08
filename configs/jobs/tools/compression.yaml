@@ -1,0 +1,30 @@
+dataset:
+  name: how2sign
+  download: false
+  manifest: true
+
+processing:
+  enabled: true
+  processor: video2compression
+  detection: yolo
+  max_workers: 4
+  detection_config:
+    model: yolov8n.pt
+    device: cpu
+    confidence_threshold: 0.5
+  video_config:
+    codec: libx264
+    padding: 0.2
+
+post_processing:
+  enabled: false
+
+output:
+  enabled: false
+
+run_name: compression
+
+paths:
+  root: dataset/how2sign
+  videos: dataset/how2sign/videos
+  manifest: dataset/how2sign/how2sign_realigned_val.csv

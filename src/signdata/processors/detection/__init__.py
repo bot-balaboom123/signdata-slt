@@ -1,7 +1,7 @@
 """Detection package exports."""
 
 from .base import Detection, PersonDetector, create_detector
-from .validation import apply_bbox_padding, single_person_check, union_bboxes
+from .validation import apply_bbox_padding, single_person_check, union_bboxes, union_bbox_tuples
 
 
 def __getattr__(name):
@@ -28,6 +28,7 @@ __all__ = [
     "single_person_check",
     "union_bboxes",
     "apply_bbox_padding",
+    "union_bbox_tuples",
     "YOLO",
     "YOLODetector",
     "MMDetDetector",

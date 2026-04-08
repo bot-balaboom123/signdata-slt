@@ -78,7 +78,7 @@ class DatasetConfig(BaseModel):
 
 class ProcessingConfig(BaseModel):
     enabled: bool = True
-    processor: Literal["video2pose", "video2crop"] = "video2pose"
+    processor: Literal["video2pose", "video2crop", "video2compression"] = "video2pose"
     detection: Literal["yolo", "mediapipe", "mmdet", "null"] = "null"
     pose: Optional[Literal["mediapipe", "mmpose"]] = None
 
@@ -238,8 +238,8 @@ class ProcessingConfig(BaseModel):
                     f"pose={self.pose!r} requires pose_config"
                 )
 
-        # video2crop requires video_config (defaults if omitted)
-        if self.processor == "video2crop" and not self.video_config:
+        # video2crop / video2compression require video_config (defaults if omitted)
+        if self.processor in ("video2crop", "video2compression") and not self.video_config:
             self.video_config = VideoProcessingConfig()
 
         return self
