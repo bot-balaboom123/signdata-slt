@@ -285,7 +285,7 @@ class TestPathsConfig:
 class TestTypedDetectionConfigs:
     def test_yolo_defaults(self):
         c = YOLODetectionConfig()
-        assert c.model == "yolov8n.pt"
+        assert c.model == "yolo11m.pt"
         assert c.device == "cpu"
         assert c.confidence_threshold == 0.5
 

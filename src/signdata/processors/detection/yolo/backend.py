@@ -6,6 +6,7 @@ from typing import List
 import numpy as np
 
 from ..base import Detection, PersonDetector
+from .resolver import is_valid_alias, resolve_yolo_model
 
 logger = logging.getLogger(__name__)
 
@@ -42,17 +43,47 @@ class YOLODetector(PersonDetector):
                 )
 
         self.config = config
+
+        # Resolve model alias / path before loading (read-only, no global mutation)
+        resolved_model = resolve_yolo_model(
+            config.model,
+            allow_download=config.allow_download,
+            weights_dir=config.weights_dir,
+        )
+        alias_mode = is_valid_alias(config.model)  # accepts both stem and .pt
+
         try:
-            self.model = YOLO(config.model)
+            self.model = YOLO(resolved_model)
         except FileNotFoundError as e:
+            if alias_mode:
+                # A valid alias that failed to load is a download/cache problem,
+                # not a user-provided path error.
+                raise RuntimeError(
+                    f"YOLO model {config.model!r} is a valid alias but could not "
+                    f"be loaded. This usually means the download failed or the "
+                    f"Ultralytics cache is missing/unwritable. Check your internet "
+                    f"connection and cache directory permissions."
+                ) from e
             raise FileNotFoundError(
                 f"YOLO weights not found: {config.model!r}. Provide an existing "
                 "local weights path or use a model alias supported by "
                 f"ultralytics {ULTRALYTICS_VERSION}."
             ) from e
+        except Exception as e:
+            msg = str(e).lower()
+            if "download" in msg or "connection" in msg or "url" in msg:
+                raise RuntimeError(
+                    f"Failed to download YOLO model {config.model!r}. "
+                    "Check your internet connection, or provide a local "
+                    "weights path instead."
+                ) from e
+            raise
 
         self.model.to(config.device)
-        logger.info("YOLO detector loaded: %s on %s", config.model, config.device)
+        logger.info(
+            "YOLO detector loaded: %s (resolved: %s) on %s",
+            config.model, resolved_model, config.device,
+        )
 
     def detect_batch(self, frames: List[np.ndarray]) -> List[List[Detection]]:
         if not frames:

@@ -43,7 +43,7 @@ from signdata.registry import PROCESSOR_REGISTRY
 class TestSchemaDefaults:
     def test_yolo_detection_defaults(self):
         cfg = YOLODetectionConfig()
-        assert cfg.model == "yolov8n.pt"
+        assert cfg.model == "yolo11m.pt"
         assert cfg.confidence_threshold == 0.5
         assert cfg.device == "cpu"
         assert cfg.min_bbox_area == 0.05
@@ -145,7 +145,7 @@ class TestYOLODetectorInit:
             "signdata.processors.detection.yolo.backend.YOLO",
             side_effect=FileNotFoundError("missing"),
         ):
-            with pytest.raises(FileNotFoundError, match="YOLO weights not found"):
+            with pytest.raises(ValueError, match="not a recognized"):
                 YOLODetector(cfg)
 
     def test_cuda_unavailable_raises_clear_error(self):

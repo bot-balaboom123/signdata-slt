@@ -17,5 +17,5 @@ matplotlib==3.9.4
 pyyaml==6.0.3
 pydantic==2.12.5
 webdataset==1.0.2
-ultralytics>=8.0.0
+ultralytics>=8.4.24  # verified for official YOLO11/YOLO26 asset aliases
 pytest==9.0.2

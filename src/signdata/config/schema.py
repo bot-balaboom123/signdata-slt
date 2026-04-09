@@ -9,11 +9,13 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # --- Detection configs (one per backend, no `type` field) ---
 
 class YOLODetectionConfig(BaseModel):
-    model: str = "yolov8n.pt"
+    model: str = "yolo11m.pt"
     device: str = "cpu"
     confidence_threshold: float = 0.5
     min_bbox_area: float = 0.05
     batch_size: int = Field(default=16, gt=0)
+    allow_download: bool = True
+    weights_dir: Optional[str] = None
 
 
 class MMDetDetectionConfig(BaseModel):

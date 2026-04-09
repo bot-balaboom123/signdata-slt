@@ -9,7 +9,7 @@ processing:
   detection: yolo
   max_workers: 4
   detection_config:
-    model: yolov8n.pt
+    model: yolo11m.pt
     device: "cuda:0"
     batch_size: 16
     confidence_threshold: 0.5

@@ -1,4 +1,10 @@
-model: yolov8n.pt
+# Accepts local paths or official Ultralytics detect aliases:
+#   yolov8{n,s,m,l,x}[.pt]   yolov9{t,s,m,c,e}[.pt]
+#   yolo11{n,s,m,l,x}[.pt]   yolo26{n,s,m,l,x}[.pt]
+# Note: YOLO11/YOLO26 use "yolo11*" / "yolo26*", NOT "yolov11*" / "yolov26*".
+model: yolo11m.pt
 device: cpu
 confidence_threshold: 0.5
 min_bbox_area: 0.05
+allow_download: true
+weights_dir: null
