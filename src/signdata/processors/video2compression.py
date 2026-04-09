@@ -13,6 +13,7 @@ import gc
 import logging
 import os
 from pathlib import Path
+from typing import List, Tuple
 
 import cv2
 
@@ -38,6 +39,54 @@ def _get_video_duration(video_path: str) -> float:
     return frame_count / fps
 
 
+def _get_row_value(row, column: str) -> str:
+    """Return a manifest value as a stripped string, or an empty string."""
+    if column not in row.index:
+        return ""
+    value = row.get(column)
+    if value is None:
+        return ""
+    value_str = str(value).strip()
+    if not value_str or value_str.lower() == "nan":
+        return ""
+    return value_str
+
+
+def _get_output_relpath(row) -> Path:
+    """Choose a stable video-level output path from a manifest row."""
+    rel_path = _get_row_value(row, "REL_PATH")
+    if rel_path:
+        return Path(rel_path).with_suffix(".mp4")
+
+    video_name = _get_row_value(row, "VIDEO_NAME")
+    if video_name:
+        return Path(f"{video_name}.mp4")
+
+    video_id = _get_row_value(row, "VIDEO_ID")
+    if video_id:
+        return Path(f"{video_id}.mp4")
+
+    raise ValueError(
+        "video2compression requires one of REL_PATH, VIDEO_NAME, or VIDEO_ID "
+        "to derive a video-level output name."
+    )
+
+
+def _build_video_tasks(df, video_dir: str) -> List[Tuple[str, Path]]:
+    """Deduplicate segment-level manifests into one task per source video."""
+    tasks: List[Tuple[str, Path]] = []
+    seen_video_paths = set()
+
+    for _, row in df.iterrows():
+        video_path = str(resolve_video_path(row, video_dir))
+        if video_path in seen_video_paths:
+            continue
+        seen_video_paths.add(video_path)
+        tasks.append((video_path, _get_output_relpath(row)))
+
+    return tasks
+
+
 @register_processor("video2compression")
 class Video2CompressionProcessor(BaseProcessor):
     """High-level processor: video → cropped & compressed video (.mp4).
@@ -58,12 +107,6 @@ class Video2CompressionProcessor(BaseProcessor):
         output_dir = context.output_dir / "compressed"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create building blocks
-        detector = create_detector(cfg.detection, cfg.detection_config)
-        ffmpeg_params = FfmpegSamplingParams(
-            sample_rate=None,  # preserve native FPS — no resampling
-        )
-
         # Load manifest
         df = context.manifest_df
         if df is None:
@@ -72,14 +115,38 @@ class Video2CompressionProcessor(BaseProcessor):
             return context
 
         video_dir = str(context.videos_dir) if context.videos_dir else ""
+        source_rows = len(df)
+        tasks = _build_video_tasks(df, video_dir)
+        total = len(tasks)
+
+        if source_rows != total:
+            self.logger.info(
+                "video2compression deduplicated %d manifest rows to %d unique videos",
+                source_rows, total,
+            )
+
+        if total == 0:
+            context.stats["processing"] = {
+                "total": 0,
+                "source_rows": source_rows,
+                "processed": 0,
+                "skipped": 0,
+                "errors": 0,
+            }
+            return context
+
+        # Create building blocks only after inputs are known
+        detector = create_detector(cfg.detection, cfg.detection_config)
+        ffmpeg_params = FfmpegSamplingParams(
+            sample_rate=None,  # preserve native FPS — no resampling
+        )
 
         processed = skipped = errors = 0
-        total = len(df)
 
         try:
-            for _, row in df.iterrows():
-                sample_id = row["SAMPLE_ID"]
-                output_path = str(output_dir / f"{sample_id}.mp4")
+            for video_path, output_relpath in tasks:
+                output_path = str(output_dir / output_relpath)
+                output_label = str(output_relpath)
 
                 # Skip existing (unless force_all)
                 if not getattr(context, 'force_all', False) and os.path.exists(output_path):
@@ -87,7 +154,6 @@ class Video2CompressionProcessor(BaseProcessor):
                     continue
 
                 try:
-                    video_path = str(resolve_video_path(row, video_dir))
                     if not os.path.exists(video_path):
                         self.logger.warning("Video not found: %s", video_path)
                         errors += 1
@@ -119,7 +185,7 @@ class Video2CompressionProcessor(BaseProcessor):
                     ]
 
                     if not all_bboxes:
-                        self.logger.debug("No detections, skipping: %s", sample_id)
+                        self.logger.debug("No detections, skipping: %s", output_label)
                         skipped += 1
                         continue
 
@@ -138,7 +204,7 @@ class Video2CompressionProcessor(BaseProcessor):
                         errors += 1
 
                 except Exception as e:
-                    self.logger.error("Error processing %s: %s", sample_id, e)
+                    self.logger.error("Error processing %s: %s", output_label, e)
                     errors += 1
 
         finally:
@@ -147,12 +213,13 @@ class Video2CompressionProcessor(BaseProcessor):
 
         context.stats["processing"] = {
             "total": total,
+            "source_rows": source_rows,
             "processed": processed,
             "skipped": skipped,
             "errors": errors,
         }
         self.logger.info(
-            "video2compression: processed=%d skipped=%d errors=%d total=%d",
-            processed, skipped, errors, total,
+            "video2compression: processed=%d skipped=%d errors=%d total=%d source_rows=%d",
+            processed, skipped, errors, total, source_rows,
         )
         return context

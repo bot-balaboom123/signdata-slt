@@ -10,9 +10,10 @@ from ..base import Detection, PersonDetector
 logger = logging.getLogger(__name__)
 
 try:
-    from ultralytics import YOLO
+    from ultralytics import YOLO, __version__ as ULTRALYTICS_VERSION
 except ImportError:
     YOLO = None  # type: ignore[assignment,misc]
+    ULTRALYTICS_VERSION = "unknown"
 
 
 class YOLODetector(PersonDetector):
@@ -29,8 +30,27 @@ class YOLODetector(PersonDetector):
                 "ultralytics is required for YOLO detection. "
                 "Install with: pip install ultralytics"
             )
+
+        if str(config.device).startswith("cuda"):
+            import torch
+
+            if not torch.cuda.is_available():
+                raise RuntimeError(
+                    f"YOLO device {config.device!r} requested but CUDA is unavailable. "
+                    "Verify your PyTorch CUDA install and GPU visibility, or "
+                    "switch detection_config.device to 'cpu'."
+                )
+
         self.config = config
-        self.model = YOLO(config.model)
+        try:
+            self.model = YOLO(config.model)
+        except FileNotFoundError as e:
+            raise FileNotFoundError(
+                f"YOLO weights not found: {config.model!r}. Provide an existing "
+                "local weights path or use a model alias supported by "
+                f"ultralytics {ULTRALYTICS_VERSION}."
+            ) from e
+
         self.model.to(config.device)
         logger.info("YOLO detector loaded: %s on %s", config.model, config.device)
 

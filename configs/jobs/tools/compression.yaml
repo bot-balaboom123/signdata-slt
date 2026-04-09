@@ -10,11 +10,12 @@ processing:
   max_workers: 4
   detection_config:
     model: yolov8n.pt
-    device: cpu
+    device: "cuda:0"
+    batch_size: 16
     confidence_threshold: 0.5
   video_config:
     codec: libx264
-    padding: 0.2
+    padding: 0.1
 
 post_processing:
   enabled: false
