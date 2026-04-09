@@ -10,9 +10,10 @@ from ..base import Detection, PersonDetector
 logger = logging.getLogger(__name__)
 
 try:
-    from ultralytics import YOLO
+    from ultralytics import YOLO, __version__ as ULTRALYTICS_VERSION
 except ImportError:
     YOLO = None  # type: ignore[assignment,misc]
+    ULTRALYTICS_VERSION = "unknown"
 
 
 class YOLODetector(PersonDetector):
@@ -29,8 +30,27 @@ class YOLODetector(PersonDetector):
                 "ultralytics is required for YOLO detection. "
                 "Install with: pip install ultralytics"
             )
+
+        if str(config.device).startswith("cuda"):
+            import torch
+
+            if not torch.cuda.is_available():
+                raise RuntimeError(
+                    f"YOLO device {config.device!r} requested but CUDA is unavailable. "
+                    "Verify your PyTorch CUDA install and GPU visibility, or "
+                    "switch detection_config.device to 'cpu'."
+                )
+
         self.config = config
-        self.model = YOLO(config.model)
+        try:
+            self.model = YOLO(config.model)
+        except FileNotFoundError as e:
+            raise FileNotFoundError(
+                f"YOLO weights not found: {config.model!r}. Provide an existing "
+                "local weights path or use a model alias supported by "
+                f"ultralytics {ULTRALYTICS_VERSION}."
+            ) from e
+
         self.model.to(config.device)
         logger.info("YOLO detector loaded: %s on %s", config.model, config.device)
 
@@ -38,41 +58,45 @@ class YOLODetector(PersonDetector):
         if not frames:
             return []
 
-        results = self.model(frames, verbose=False)
+        batch_size = self.config.batch_size
         all_detections: List[List[Detection]] = []
 
-        for i, result in enumerate(results):
-            h, w = frames[i].shape[:2]
-            frame_area = float(w * h)
-            frame_dets = []
+        for start in range(0, len(frames), batch_size):
+            chunk = frames[start : start + batch_size]
+            results = self.model(chunk, verbose=False)
 
-            boxes = result.boxes
-            if boxes is None or len(boxes) == 0:
+            for i, result in enumerate(results):
+                h, w = chunk[i].shape[:2]
+                frame_area = float(w * h)
+                frame_dets = []
+
+                boxes = result.boxes
+                if boxes is None or len(boxes) == 0:
+                    all_detections.append(frame_dets)
+                    continue
+
+                class_ids = boxes.cls.cpu().numpy()
+                confidences = boxes.conf.cpu().numpy()
+                xyxy = boxes.xyxy.cpu().numpy()
+
+                for j in range(len(class_ids)):
+                    if int(class_ids[j]) != 0:  # person class only
+                        continue
+                    conf = float(confidences[j])
+                    if conf < self.config.confidence_threshold:
+                        continue
+
+                    x1, y1, x2, y2 = xyxy[j]
+                    bbox_area = (x2 - x1) * (y2 - y1)
+                    if frame_area > 0 and (bbox_area / frame_area) < self.config.min_bbox_area:
+                        continue
+
+                    frame_dets.append(Detection(
+                        bbox=(float(x1), float(y1), float(x2), float(y2)),
+                        confidence=conf,
+                    ))
+
                 all_detections.append(frame_dets)
-                continue
-
-            class_ids = boxes.cls.cpu().numpy()
-            confidences = boxes.conf.cpu().numpy()
-            xyxy = boxes.xyxy.cpu().numpy()
-
-            for j in range(len(class_ids)):
-                if int(class_ids[j]) != 0:  # person class only
-                    continue
-                conf = float(confidences[j])
-                if conf < self.config.confidence_threshold:
-                    continue
-
-                x1, y1, x2, y2 = xyxy[j]
-                bbox_area = (x2 - x1) * (y2 - y1)
-                if frame_area > 0 and (bbox_area / frame_area) < self.config.min_bbox_area:
-                    continue
-
-                frame_dets.append(Detection(
-                    bbox=(float(x1), float(y1), float(x2), float(y2)),
-                    confidence=conf,
-                ))
-
-            all_detections.append(frame_dets)
 
         return all_detections
 

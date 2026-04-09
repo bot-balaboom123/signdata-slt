@@ -190,7 +190,7 @@ def clip_and_crop(
     cmd.extend(["-vf", ",".join(vf_filters)])
 
     codec = getattr(video_config, "codec", "libx264")
-    cmd.extend(["-c:v", codec, "-an"])
+    cmd.extend(["-c:v", codec, "-preset", "medium", "-crf", "15", "-an"])
     cmd.extend(["-v", "error"])
     cmd.append(output_path)
 

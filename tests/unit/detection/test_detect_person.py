@@ -8,6 +8,7 @@ Covers:
 
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -30,6 +31,7 @@ from signdata.config.schema import (
     MMDetDetectionConfig,
 )
 from signdata.processors.detection.validation import union_bbox_tuples
+from signdata.processors.detection.yolo.backend import YOLODetector
 import signdata.processors  # noqa: F401 – trigger registrations
 from signdata.registry import PROCESSOR_REGISTRY
 
@@ -126,3 +128,29 @@ class TestPipelineRegistration:
 
     def test_video2crop_registered(self):
         assert "video2crop" in PROCESSOR_REGISTRY
+
+    def test_video2compression_registered(self):
+        assert "video2compression" in PROCESSOR_REGISTRY
+
+
+# ===========================================================================
+# 4. YOLO init errors
+# ===========================================================================
+
+class TestYOLODetectorInit:
+    def test_missing_weights_raises_clear_error(self):
+        cfg = YOLODetectionConfig(model="missing-model.pt", device="cpu")
+
+        with patch(
+            "signdata.processors.detection.yolo.backend.YOLO",
+            side_effect=FileNotFoundError("missing"),
+        ):
+            with pytest.raises(FileNotFoundError, match="YOLO weights not found"):
+                YOLODetector(cfg)
+
+    def test_cuda_unavailable_raises_clear_error(self):
+        cfg = YOLODetectionConfig(model="yolov8n.pt", device="cuda:0")
+
+        with patch("torch.cuda.is_available", return_value=False):
+            with pytest.raises(RuntimeError, match="CUDA is unavailable"):
+                YOLODetector(cfg)

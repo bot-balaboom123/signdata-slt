@@ -21,6 +21,7 @@ processing:
     model: yolov8n.pt
     device: cpu
     confidence_threshold: 0.5
+    batch_size: 16
   video_config:
     codec: libx264
     padding: 0.0
