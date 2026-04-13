@@ -6,7 +6,7 @@ from typing import List
 import numpy as np
 
 from ..base import Detection, PersonDetector
-from .resolver import is_valid_alias, resolve_yolo_model
+from .resolver import VALID_ALIASES, resolve_yolo_model
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +15,13 @@ try:
 except ImportError:
     YOLO = None  # type: ignore[assignment,misc]
     ULTRALYTICS_VERSION = "unknown"
+
+
+PERSON_CLASS_ID = 0
+
+
+def _is_cuda_device(device: str) -> bool:
+    return str(device).startswith("cuda")
 
 
 class YOLODetector(PersonDetector):
@@ -32,7 +39,7 @@ class YOLODetector(PersonDetector):
                 "Install with: pip install ultralytics"
             )
 
-        if str(config.device).startswith("cuda"):
+        if _is_cuda_device(config.device):
             import torch
 
             if not torch.cuda.is_available():
@@ -43,21 +50,22 @@ class YOLODetector(PersonDetector):
                 )
 
         self.config = config
+        self.use_fp16 = _is_cuda_device(config.device)
 
-        # Resolve model alias / path before loading (read-only, no global mutation)
         resolved_model = resolve_yolo_model(
             config.model,
             allow_download=config.allow_download,
             weights_dir=config.weights_dir,
         )
-        alias_mode = is_valid_alias(config.model)  # accepts both stem and .pt
+        # Key alias_mode off the resolver's output, not the raw config, so a
+        # cwd-local file named like an alias does not trip the download-error
+        # branch below.
+        alias_mode = resolved_model in VALID_ALIASES
 
         try:
             self.model = YOLO(resolved_model)
         except FileNotFoundError as e:
             if alias_mode:
-                # A valid alias that failed to load is a download/cache problem,
-                # not a user-provided path error.
                 raise RuntimeError(
                     f"YOLO model {config.model!r} is a valid alias but could not "
                     f"be loaded. This usually means the download failed or the "
@@ -79,10 +87,24 @@ class YOLODetector(PersonDetector):
                 ) from e
             raise
 
-        self.model.to(config.device)
         logger.info(
-            "YOLO detector loaded: %s (resolved: %s) on %s",
-            config.model, resolved_model, config.device,
+            "YOLO detector loaded: %s (resolved: %s) on %s (fp16=%s)",
+            config.model, resolved_model, config.device, self.use_fp16,
+        )
+
+    def _reset_predictor(self) -> None:
+        # Ultralytics reuses the existing predictor as long as the device stays
+        # the same, so a previous fp16 AutoBackend would keep running even if
+        # we pass half=False on a later call. Null it out to force a rebuild.
+        if hasattr(self.model, "predictor"):
+            self.model.predictor = None
+
+    def _predict_chunk(self, chunk: List[np.ndarray], *, half: bool):
+        return self.model.predict(
+            source=chunk,
+            device=self.config.device,
+            verbose=False,
+            half=half,
         )
 
     def detect_batch(self, frames: List[np.ndarray]) -> List[List[Detection]]:
@@ -94,7 +116,29 @@ class YOLODetector(PersonDetector):
 
         for start in range(0, len(frames), batch_size):
             chunk = frames[start : start + batch_size]
-            results = self.model(chunk, verbose=False)
+
+            if self.use_fp16:
+                try:
+                    results = self._predict_chunk(chunk, half=True)
+                except Exception as fp16_exc:
+                    logger.warning(
+                        "FP16 inference failed (%s); resetting the Ultralytics "
+                        "predictor and retrying with half=False for the rest of "
+                        "this run.",
+                        fp16_exc,
+                    )
+                    self._reset_predictor()
+                    try:
+                        results = self._predict_chunk(chunk, half=False)
+                    except Exception as fp32_exc:
+                        raise RuntimeError(
+                            "YOLO inference failed with fp16, and the fp32 "
+                            "retry after predictor reset also failed. "
+                            f"fp16 error: {fp16_exc}; fp32 retry error: {fp32_exc}"
+                        ) from fp32_exc
+                    self.use_fp16 = False
+            else:
+                results = self._predict_chunk(chunk, half=False)
 
             for i, result in enumerate(results):
                 h, w = chunk[i].shape[:2]
@@ -111,7 +155,7 @@ class YOLODetector(PersonDetector):
                 xyxy = boxes.xyxy.cpu().numpy()
 
                 for j in range(len(class_ids)):
-                    if int(class_ids[j]) != 0:  # person class only
+                    if int(class_ids[j]) != PERSON_CLASS_ID:
                         continue
                     conf = float(confidences[j])
                     if conf < self.config.confidence_threshold:

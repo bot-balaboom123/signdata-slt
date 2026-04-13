@@ -8,7 +8,10 @@ Covers:
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
+
+import numpy as np
 
 import pytest
 
@@ -43,7 +46,7 @@ from signdata.registry import PROCESSOR_REGISTRY
 class TestSchemaDefaults:
     def test_yolo_detection_defaults(self):
         cfg = YOLODetectionConfig()
-        assert cfg.model == "yolo11m.pt"
+        assert cfg.model == "yolov8n.pt"
         assert cfg.confidence_threshold == 0.5
         assert cfg.device == "cpu"
         assert cfg.min_bbox_area == 0.05
@@ -138,14 +141,18 @@ class TestPipelineRegistration:
 # ===========================================================================
 
 class TestYOLODetectorInit:
-    def test_missing_weights_raises_clear_error(self):
-        cfg = YOLODetectionConfig(model="missing-model.pt", device="cpu")
+    def test_missing_weights_raises_clear_error(self, tmp_path):
+        # Use an existing local-path so the resolver passes through to YOLO();
+        # unrecognized alias strings are now rejected earlier by the resolver.
+        weights = tmp_path / "custom-weights.pt"
+        weights.touch()
+        cfg = YOLODetectionConfig(model=str(weights), device="cpu")
 
         with patch(
             "signdata.processors.detection.yolo.backend.YOLO",
             side_effect=FileNotFoundError("missing"),
         ):
-            with pytest.raises(ValueError, match="not a recognized"):
+            with pytest.raises(FileNotFoundError, match="YOLO weights not found"):
                 YOLODetector(cfg)
 
     def test_cuda_unavailable_raises_clear_error(self):
@@ -154,3 +161,156 @@ class TestYOLODetectorInit:
         with patch("torch.cuda.is_available", return_value=False):
             with pytest.raises(RuntimeError, match="CUDA is unavailable"):
                 YOLODetector(cfg)
+
+
+# ===========================================================================
+# 5. FP16 inference policy
+# ===========================================================================
+
+class _EmptyResult:
+    boxes = None
+
+
+class _StatefulFakeYOLO:
+    """Minimal fake that mimics Ultralytics predictor reuse semantics."""
+
+    def __init__(
+        self,
+        *,
+        fp16_failures: int = 0,
+        fp32_failures: int = 0,
+        fp16_error: str = "fp16 not supported on this device",
+        fp32_error: str = "fp32 fallback failed",
+    ):
+        self.predictor = None
+        self.calls = []
+        self.predictor_builds = 0
+        self._fp16_failures = fp16_failures
+        self._fp32_failures = fp32_failures
+        self._fp16_error = fp16_error
+        self._fp32_error = fp32_error
+
+    def predict(self, *, source, device, verbose, half):
+        # Ultralytics reuses the predictor when device is unchanged, so the
+        # effective precision comes from the existing predictor, not the new
+        # half= kwarg, unless caller resets predictor first.
+        if self.predictor is None:
+            self.predictor_builds += 1
+            self.predictor = SimpleNamespace(fp16=half)
+
+        effective_half = self.predictor.fp16
+        self.calls.append({
+            "requested_half": half,
+            "effective_half": effective_half,
+            "device": device,
+            "predictor_builds": self.predictor_builds,
+        })
+
+        if effective_half and self._fp16_failures > 0:
+            self._fp16_failures -= 1
+            raise RuntimeError(self._fp16_error)
+        if not effective_half and self._fp32_failures > 0:
+            self._fp32_failures -= 1
+            raise RuntimeError(self._fp32_error)
+
+        return [_EmptyResult() for _ in source]
+
+
+class TestYOLODetectorFP16Policy:
+    """Verify CUDA→FP16 policy and real predictor-reset fallback behavior."""
+
+    _FRAME = np.zeros((100, 100, 3), dtype=np.uint8)
+
+    def _make_detector(self, device: str, model=None, *, cuda_available: bool = True):
+        from contextlib import ExitStack
+        cfg = YOLODetectionConfig(model="yolov8n.pt", device=device)
+        fake_model = model or _StatefulFakeYOLO()
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch("signdata.processors.detection.yolo.backend.YOLO", return_value=fake_model)
+            )
+            if device.startswith("cuda"):
+                stack.enter_context(
+                    patch("torch.cuda.is_available", return_value=cuda_available)
+                )
+            detector = YOLODetector(cfg)
+        return detector, fake_model
+
+    def test_cpu_sets_use_fp16_false(self):
+        detector, _ = self._make_detector("cpu")
+        assert detector.use_fp16 is False
+
+    def test_cuda_sets_use_fp16_true(self):
+        detector, _ = self._make_detector("cuda:0")
+        assert detector.use_fp16 is True
+
+    def test_cpu_calls_predict_with_half_false(self):
+        detector, fake_model = self._make_detector("cpu")
+
+        detector.detect_batch([self._FRAME])
+
+        assert len(fake_model.calls) == 1
+        assert fake_model.calls[0]["requested_half"] is False
+        assert fake_model.calls[0]["effective_half"] is False
+
+    def test_cuda_calls_predict_with_half_true(self):
+        detector, fake_model = self._make_detector("cuda:0")
+
+        detector.detect_batch([self._FRAME])
+
+        assert len(fake_model.calls) == 1
+        assert fake_model.calls[0]["requested_half"] is True
+        assert fake_model.calls[0]["effective_half"] is True
+
+    def test_fp16_failure_resets_predictor_before_fp32_retry(self):
+        fake_model = _StatefulFakeYOLO(
+            fp16_failures=2,
+            fp16_error="CUDA kernel for float16 not supported",
+        )
+        detector, fake_model = self._make_detector("cuda:0", model=fake_model)
+        assert detector.use_fp16 is True
+
+        detector.detect_batch([self._FRAME])
+
+        assert detector.use_fp16 is False
+        assert len(fake_model.calls) == 2
+        assert fake_model.calls[0]["requested_half"] is True
+        assert fake_model.calls[0]["effective_half"] is True
+        assert fake_model.calls[1]["requested_half"] is False
+        assert fake_model.calls[1]["effective_half"] is False
+        assert fake_model.predictor_builds == 2
+
+    def test_fp16_fallback_persists_for_subsequent_batches(self):
+        fake_model = _StatefulFakeYOLO(
+            fp16_failures=2,
+            fp16_error="CUDA kernel for float16 not supported",
+        )
+        cfg = YOLODetectionConfig(model="yolov8n.pt", device="cuda:0", batch_size=1)
+        with patch("torch.cuda.is_available", return_value=True):
+            with patch("signdata.processors.detection.yolo.backend.YOLO", return_value=fake_model):
+                detector = YOLODetector(cfg)
+
+        detector.detect_batch([self._FRAME, self._FRAME])
+
+        assert len(fake_model.calls) == 3
+        assert fake_model.calls[0]["effective_half"] is True
+        assert fake_model.calls[1]["effective_half"] is False
+        assert fake_model.calls[2]["requested_half"] is False
+        assert fake_model.calls[2]["effective_half"] is False
+        assert fake_model.predictor_builds == 2
+        assert fake_model.calls[1]["predictor_builds"] == fake_model.calls[2]["predictor_builds"]
+
+    def test_fp32_retry_failure_raises_combined_error(self):
+        fake_model = _StatefulFakeYOLO(
+            fp16_failures=2,
+            fp32_failures=1,
+            fp16_error="no kernel image is available for execution on the device",
+            fp32_error="invalid device function",
+        )
+        detector, _ = self._make_detector("cuda:0", model=fake_model)
+
+        with pytest.raises(
+            RuntimeError,
+            match="fp16, and the fp32 retry after predictor reset also failed",
+        ):
+            detector.detect_batch([self._FRAME])

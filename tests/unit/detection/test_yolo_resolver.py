@@ -1,23 +1,39 @@
 """Tests for YOLO model resolver: alias validation, typo suggestions, cache logic."""
 
-import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest
 
-PROJECT_ROOT = next(
-    path for path in Path(__file__).resolve().parents if (path / "src").is_dir()
-)
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
-
 from signdata.processors.detection.yolo.resolver import (
-    VALID_ALIASES,
     SUPPORTED_FAMILIES,
+    VALID_ALIASES,
     is_valid_alias,
     resolve_yolo_model,
 )
+from signdata.processors.detection.yolo.backend import YOLODetector
 from signdata.config.schema import YOLODetectionConfig
+
+
+@pytest.fixture
+def block_is_file():
+    """Patch Path.is_file so paths whose str matches any given value return False.
+
+    Useful for simulating "alias not found in cwd" without blocking cached
+    copies under tmp_path, which have a different str representation.
+    """
+    def _block(*paths: str):
+        blocked = set(paths)
+        original = Path.is_file
+
+        def fake(self):
+            if str(self) in blocked:
+                return False
+            return original(self)
+
+        return patch.object(Path, "is_file", fake)
+
+    return _block
 
 
 # ===========================================================================
@@ -25,40 +41,38 @@ from signdata.config.schema import YOLODetectionConfig
 # ===========================================================================
 
 class TestAliasCatalogue:
-    def test_yolov8_aliases(self):
-        for size in ["n", "s", "m", "l", "x"]:
-            assert f"yolov8{size}.pt" in VALID_ALIASES
+    @pytest.mark.parametrize(
+        "family,sizes",
+        list(SUPPORTED_FAMILIES.items()),
+        ids=list(SUPPORTED_FAMILIES.keys()),
+    )
+    def test_family_aliases_present(self, family, sizes):
+        for size in sizes:
+            assert f"{family}{size}.pt" in VALID_ALIASES
 
-    def test_yolov9_aliases(self):
-        for size in ["t", "s", "m", "c", "e"]:
-            assert f"yolov9{size}.pt" in VALID_ALIASES
+    @pytest.mark.parametrize(
+        "alias",
+        ["yolov10n.pt", "yolov11m.pt", "yolov26n.pt"],
+    )
+    def test_invalid_alias_not_in_set(self, alias):
+        assert alias not in VALID_ALIASES
 
-    def test_yolo11_aliases(self):
-        for size in ["n", "s", "m", "l", "x"]:
-            assert f"yolo11{size}.pt" in VALID_ALIASES
-
-    def test_yolo26_aliases(self):
-        for size in ["n", "s", "m", "l", "x"]:
-            assert f"yolo26{size}.pt" in VALID_ALIASES
-
-    def test_invalid_alias_not_in_set(self):
-        assert "yolov10n.pt" not in VALID_ALIASES
-        assert "yolov11m.pt" not in VALID_ALIASES  # typo form
-        assert "yolov26n.pt" not in VALID_ALIASES  # typo form
-
-    def test_is_valid_alias_with_pt(self):
-        assert is_valid_alias("yolov8n.pt") is True
-        assert is_valid_alias("yolo11m.pt") is True
-        assert is_valid_alias("yolo26n.pt") is True
-        assert is_valid_alias("yolov11m.pt") is False
-        assert is_valid_alias("random.pt") is False
-
-    def test_is_valid_alias_bare_stem(self):
-        """Bare stems (without .pt) should also be recognized."""
-        assert is_valid_alias("yolov8n") is True
-        assert is_valid_alias("yolo11m") is True
-        assert is_valid_alias("yolo26n") is True
-        assert is_valid_alias("yolov26n") is False
+    @pytest.mark.parametrize(
+        "model,expected",
+        [
+            ("yolov8n.pt", True),
+            ("yolo11m.pt", True),
+            ("yolo26n.pt", True),
+            ("yolov11m.pt", False),
+            ("random.pt", False),
+            ("yolov8n", True),
+            ("yolo11m", True),
+            ("yolo26n", True),
+            ("yolov26n", False),
+        ],
+    )
+    def test_is_valid_alias(self, model, expected):
+        assert is_valid_alias(model) is expected
 
 
 # ===========================================================================
@@ -69,23 +83,14 @@ class TestLocalFileResolution:
     def test_existing_local_file(self, tmp_path):
         weights = tmp_path / "my_custom_model.pt"
         weights.touch()
-        result = resolve_yolo_model(str(weights))
-        assert result == str(weights)
+        assert resolve_yolo_model(str(weights)) == str(weights)
 
-    def test_cached_in_weights_dir(self, tmp_path):
-        """When a valid alias is found in weights_dir, return the cached path."""
+    def test_cached_in_weights_dir(self, tmp_path, block_is_file):
         weights_dir = tmp_path / "cache"
         weights_dir.mkdir()
         (weights_dir / "yolo11n.pt").touch()
 
-        # Patch Path.is_file so the bare alias "yolo11n.pt" is NOT found in cwd
-        original_is_file = Path.is_file
-        def mock_is_file(self):
-            if str(self) == "yolo11n.pt":
-                return False  # not in cwd
-            return original_is_file(self)
-
-        with patch.object(Path, "is_file", mock_is_file):
+        with block_is_file("yolo11n.pt"):
             result = resolve_yolo_model("yolo11n.pt", weights_dir=str(weights_dir))
         assert result == str(weights_dir / "yolo11n.pt")
 
@@ -95,30 +100,20 @@ class TestLocalFileResolution:
 # ===========================================================================
 
 class TestTypoDetection:
-    def test_yolov11_suggests_yolo11(self):
-        with pytest.raises(ValueError, match="Did you mean 'yolo11m.pt'"):
-            resolve_yolo_model("yolov11m.pt")
-
-    def test_yolov11n_suggests_yolo11n(self):
-        with pytest.raises(ValueError, match="Did you mean 'yolo11n.pt'"):
-            resolve_yolo_model("yolov11n.pt")
-
-    def test_yolov11x_suggests_yolo11x(self):
-        with pytest.raises(ValueError, match="Did you mean 'yolo11x.pt'"):
-            resolve_yolo_model("yolov11x.pt")
-
-    def test_yolov26n_suggests_yolo26n(self):
-        with pytest.raises(ValueError, match="Did you mean 'yolo26n.pt'"):
-            resolve_yolo_model("yolov26n.pt")
-
-    def test_yolov26m_suggests_yolo26m(self):
-        with pytest.raises(ValueError, match="Did you mean 'yolo26m.pt'"):
-            resolve_yolo_model("yolov26m.pt")
-
-    def test_bare_stem_typo(self):
-        """Bare stem typo should also be caught."""
-        with pytest.raises(ValueError, match="Did you mean 'yolo26n.pt'"):
-            resolve_yolo_model("yolov26n")
+    @pytest.mark.parametrize(
+        "typo,suggestion",
+        [
+            ("yolov11m.pt", "yolo11m.pt"),
+            ("yolov11n.pt", "yolo11n.pt"),
+            ("yolov11x.pt", "yolo11x.pt"),
+            ("yolov26n.pt", "yolo26n.pt"),
+            ("yolov26m.pt", "yolo26m.pt"),
+            ("yolov26n", "yolo26n.pt"),
+        ],
+    )
+    def test_typo_suggests_correction(self, typo, suggestion):
+        with pytest.raises(ValueError, match=f"Did you mean '{suggestion}'"):
+            resolve_yolo_model(typo)
 
 
 # ===========================================================================
@@ -126,30 +121,19 @@ class TestTypoDetection:
 # ===========================================================================
 
 class TestValidAliasDownload:
-    def test_valid_alias_returns_alias(self):
-        result = resolve_yolo_model("yolov8n.pt", allow_download=True)
-        assert result == "yolov8n.pt"
-
-    def test_yolo11_alias_returns_alias(self):
-        result = resolve_yolo_model("yolo11m.pt", allow_download=True)
-        assert result == "yolo11m.pt"
-
-    def test_yolov9_alias_returns_alias(self):
-        result = resolve_yolo_model("yolov9c.pt", allow_download=True)
-        assert result == "yolov9c.pt"
-
-    def test_yolo26_alias_returns_alias(self):
-        result = resolve_yolo_model("yolo26n.pt", allow_download=True)
-        assert result == "yolo26n.pt"
-
-    def test_bare_stem_normalised_to_pt(self):
-        """Bare stem input should resolve to .pt form."""
-        result = resolve_yolo_model("yolov8n", allow_download=True)
-        assert result == "yolov8n.pt"
-
-    def test_yolo26_bare_stem(self):
-        result = resolve_yolo_model("yolo26n", allow_download=True)
-        assert result == "yolo26n.pt"
+    @pytest.mark.parametrize(
+        "model,expected",
+        [
+            ("yolov8n.pt", "yolov8n.pt"),
+            ("yolo11m.pt", "yolo11m.pt"),
+            ("yolov9c.pt", "yolov9c.pt"),
+            ("yolo26n.pt", "yolo26n.pt"),
+            ("yolov8n", "yolov8n.pt"),
+            ("yolo26n", "yolo26n.pt"),
+        ],
+    )
+    def test_alias_returned_normalised(self, model, expected):
+        assert resolve_yolo_model(model, allow_download=True) == expected
 
 
 # ===========================================================================
@@ -189,15 +173,8 @@ class TestRemoteModelReferences:
 # ===========================================================================
 
 class TestDownloadDisabled:
-    def test_alias_no_cache_raises(self):
-        """Valid alias + allow_download=False + no cached file => FileNotFoundError."""
-        original_is_file = Path.is_file
-        def mock_is_file(self):
-            if self.name == "yolo11x.pt":
-                return False
-            return original_is_file(self)
-
-        with patch.object(Path, "is_file", mock_is_file):
+    def test_alias_no_cache_raises(self, block_is_file):
+        with block_is_file("yolo11x.pt"):
             with pytest.raises(FileNotFoundError, match="allow_download=False"):
                 resolve_yolo_model(
                     "yolo11x.pt",
@@ -205,43 +182,19 @@ class TestDownloadDisabled:
                     weights_dir="/nonexistent/path",
                 )
 
-    def test_alias_cached_in_weights_dir(self, tmp_path):
+    @pytest.mark.parametrize("alias", ["yolo11m.pt", "yolo26n.pt"])
+    def test_alias_cached_in_weights_dir(self, tmp_path, block_is_file, alias):
         weights_dir = tmp_path / "cache"
         weights_dir.mkdir()
-        (weights_dir / "yolo11m.pt").touch()
+        (weights_dir / alias).touch()
 
-        original_is_file = Path.is_file
-        def mock_is_file(self):
-            if str(self) == "yolo11m.pt":
-                return False  # not in cwd
-            return original_is_file(self)
-
-        with patch.object(Path, "is_file", mock_is_file):
+        with block_is_file(alias):
             result = resolve_yolo_model(
-                "yolo11m.pt",
+                alias,
                 allow_download=False,
                 weights_dir=str(weights_dir),
             )
-        assert result == str(weights_dir / "yolo11m.pt")
-
-    def test_yolo26_cached_in_weights_dir(self, tmp_path):
-        weights_dir = tmp_path / "cache"
-        weights_dir.mkdir()
-        (weights_dir / "yolo26n.pt").touch()
-
-        original_is_file = Path.is_file
-        def mock_is_file(self):
-            if str(self) == "yolo26n.pt":
-                return False
-            return original_is_file(self)
-
-        with patch.object(Path, "is_file", mock_is_file):
-            result = resolve_yolo_model(
-                "yolo26n.pt",
-                allow_download=False,
-                weights_dir=str(weights_dir),
-            )
-        assert result == str(weights_dir / "yolo26n.pt")
+        assert result == str(weights_dir / alias)
 
 
 # ===========================================================================
@@ -263,41 +216,25 @@ class TestUnrecognizedModel:
 # ===========================================================================
 
 class TestUltralyticsWeightsDirFallback:
-    def test_allow_download_false_finds_in_ultralytics_cache(self, tmp_path):
-        """allow_download=False should check Ultralytics' configured weights_dir."""
+    def test_allow_download_false_finds_in_ultralytics_cache(self, tmp_path, block_is_file):
         ul_cache = tmp_path / "ultralytics_weights"
         ul_cache.mkdir()
         (ul_cache / "yolov9t.pt").touch()
 
-        original_is_file = Path.is_file
-        def mock_is_file(self):
-            if str(self) == "yolov9t.pt":
-                return False
-            return original_is_file(self)
-
-        with patch.object(Path, "is_file", mock_is_file):
-            with patch(
-                "signdata.processors.detection.yolo.resolver._get_ultralytics_weights_dir",
-                return_value=ul_cache,
-            ):
-                result = resolve_yolo_model("yolov9t.pt", allow_download=False)
+        with block_is_file("yolov9t.pt"), patch(
+            "signdata.processors.detection.yolo.resolver._get_ultralytics_weights_dir",
+            return_value=ul_cache,
+        ):
+            result = resolve_yolo_model("yolov9t.pt", allow_download=False)
         assert result == str(ul_cache / "yolov9t.pt")
 
-    def test_allow_download_false_no_ultralytics_cache_raises(self):
-        """allow_download=False with no cache anywhere should raise."""
-        original_is_file = Path.is_file
-        def mock_is_file(self):
-            if self.name == "yolov9t.pt":
-                return False
-            return original_is_file(self)
-
-        with patch.object(Path, "is_file", mock_is_file):
-            with patch(
-                "signdata.processors.detection.yolo.resolver._get_ultralytics_weights_dir",
-                return_value=None,
-            ):
-                with pytest.raises(FileNotFoundError, match="allow_download=False"):
-                    resolve_yolo_model("yolov9t.pt", allow_download=False)
+    def test_allow_download_false_no_ultralytics_cache_raises(self, block_is_file):
+        with block_is_file("yolov9t.pt"), patch(
+            "signdata.processors.detection.yolo.resolver._get_ultralytics_weights_dir",
+            return_value=None,
+        ):
+            with pytest.raises(FileNotFoundError, match="allow_download=False"):
+                resolve_yolo_model("yolov9t.pt", allow_download=False)
 
 
 # ===========================================================================
@@ -333,7 +270,7 @@ class TestInstalledAssetSupport:
 class TestYOLOConfigNewFields:
     def test_defaults(self):
         cfg = YOLODetectionConfig()
-        assert cfg.model == "yolo11m.pt"
+        assert cfg.model == "yolov8n.pt"
         assert cfg.allow_download is True
         assert cfg.weights_dir is None
 
@@ -353,36 +290,30 @@ class TestYOLOConfigNewFields:
 # ===========================================================================
 
 class TestBackendResolverIntegration:
-    def test_typo_fails_before_yolo_load(self):
-        """Typo model should fail at resolver, never reaching YOLO()."""
-        from signdata.processors.detection.yolo.backend import YOLODetector
-
-        cfg = YOLODetectionConfig(model="yolov11m.pt", device="cpu")
-        with patch(
-            "signdata.processors.detection.yolo.backend.YOLO",
-        ) as mock_yolo:
-            with pytest.raises(ValueError, match="Did you mean"):
+    @pytest.mark.parametrize(
+        "typo,expected_match",
+        [
+            ("yolov11m.pt", "Did you mean"),
+            ("yolov26n.pt", "Did you mean 'yolo26n.pt'"),
+        ],
+    )
+    def test_typo_fails_before_yolo_load(self, typo, expected_match):
+        cfg = YOLODetectionConfig(model=typo, device="cpu")
+        with patch("signdata.processors.detection.yolo.backend.YOLO") as mock_yolo:
+            with pytest.raises(ValueError, match=expected_match):
                 YOLODetector(cfg)
             mock_yolo.assert_not_called()
 
     def test_valid_alias_passes_to_yolo(self):
-        from signdata.processors.detection.yolo.backend import YOLODetector
-
         cfg = YOLODetectionConfig(model="yolov8n.pt", device="cpu")
-        mock_model = MagicMock()
         with patch(
             "signdata.processors.detection.yolo.backend.YOLO",
-            return_value=mock_model,
+            return_value=MagicMock(),
         ) as mock_yolo:
-            detector = YOLODetector(cfg)
+            YOLODetector(cfg)
             mock_yolo.assert_called_once_with("yolov8n.pt")
-            mock_model.to.assert_called_once_with("cpu")
 
     def test_alias_file_not_found_becomes_runtime_error(self):
-        """FileNotFoundError from YOLO() on a valid alias should
-        surface as a download/cache RuntimeError."""
-        from signdata.processors.detection.yolo.backend import YOLODetector
-
         cfg = YOLODetectionConfig(model="yolov8n.pt", device="cpu")
         with patch(
             "signdata.processors.detection.yolo.backend.YOLO",
@@ -392,12 +323,8 @@ class TestBackendResolverIntegration:
                 YOLODetector(cfg)
 
     def test_local_path_file_not_found_stays_file_not_found(self, tmp_path):
-        """FileNotFoundError from YOLO() on a non-alias local path
-        should remain a FileNotFoundError with 'weights not found'."""
-        from signdata.processors.detection.yolo.backend import YOLODetector
-
         local_weights = tmp_path / "custom_model.pt"
-        local_weights.touch()  # resolver passes (file exists)
+        local_weights.touch()
 
         cfg = YOLODetectionConfig(model=str(local_weights), device="cpu")
         with patch(
@@ -406,15 +333,3 @@ class TestBackendResolverIntegration:
         ):
             with pytest.raises(FileNotFoundError, match="YOLO weights not found"):
                 YOLODetector(cfg)
-
-    def test_yolov26_typo_fails_before_yolo_load(self):
-        """yolov26n.pt typo should fail at resolver with suggestion."""
-        from signdata.processors.detection.yolo.backend import YOLODetector
-
-        cfg = YOLODetectionConfig(model="yolov26n.pt", device="cpu")
-        with patch(
-            "signdata.processors.detection.yolo.backend.YOLO",
-        ) as mock_yolo:
-            with pytest.raises(ValueError, match="Did you mean 'yolo26n.pt'"):
-                YOLODetector(cfg)
-            mock_yolo.assert_not_called()

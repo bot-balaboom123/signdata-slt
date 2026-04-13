@@ -2,18 +2,15 @@
 
 import logging
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Supported detect-only family rules: family prefix -> allowed size suffixes.
 # Families whose official name drops the "v" (yolo11, yolo26) are listed
 # without "v"; families that keep it (yolov8, yolov9) include "v".
-# ---------------------------------------------------------------------------
-
 SUPPORTED_FAMILIES: dict[str, list[str]] = {
     "yolov8": ["n", "s", "m", "l", "x"],
     "yolov9": ["t", "s", "m", "c", "e"],
@@ -21,67 +18,67 @@ SUPPORTED_FAMILIES: dict[str, list[str]] = {
     "yolo26": ["n", "s", "m", "l", "x"],
 }
 
-# Build the full set of valid aliases in normalised .pt form.
-VALID_ALIASES: set[str] = set()
-for _family, _sizes in SUPPORTED_FAMILIES.items():
-    for _size in _sizes:
-        VALID_ALIASES.add(f"{_family}{_size}.pt")
+VALID_ALIASES: set[str] = {
+    f"{family}{size}.pt"
+    for family, sizes in SUPPORTED_FAMILIES.items()
+    for size in sizes
+}
 
+_HTTP_SCHEMES = {"http", "https"}
+_TRITON_SCHEMES = _HTTP_SCHEMES | {"grpc"}
+_TYPO_RE = re.compile(r"^yolov(\d+)([a-z])\.pt$")
+_FAMILY_RE = re.compile(r"^(yolov?\d+)[a-z]\.pt$")
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _normalize_stem(model: str) -> str:
-    """Ensure model string ends with ``.pt`` (Ultralytics accepts bare stems
-    but always normalizes to ``.pt`` internally)."""
+    """Ultralytics accepts bare stems but always normalizes to .pt internally."""
     if not model.endswith(".pt"):
         return model + ".pt"
     return model
 
 
-def _is_hub_model(model: str) -> bool:
-    """Return True for Ultralytics HUB model URLs."""
+@lru_cache(maxsize=1)
+def _hub_web_root() -> str:
     try:
         from ultralytics.hub import HUB_WEB_ROOT
-        hub_root = HUB_WEB_ROOT
+        return HUB_WEB_ROOT
     except Exception:
-        hub_root = "https://hub.ultralytics.com"
-    return model.startswith(f"{hub_root}/models/")
+        return "https://hub.ultralytics.com"
+
+
+def _is_hub_model(model: str) -> bool:
+    return model.startswith(f"{_hub_web_root()}/models/")
 
 
 def _is_remote_weights_url(model: str) -> bool:
-    """Return True for remote weight URLs that Ultralytics downloads locally."""
     url = urlsplit(model)
-    if url.scheme not in {"http", "https", "ul"}:
+    if url.scheme not in _HTTP_SCHEMES:
         return False
     return url.path.endswith((".pt", ".pth"))
 
 
 def _is_triton_model(model: str) -> bool:
-    """Return True for Triton model URLs that Ultralytics routes directly."""
+    # Triton endpoints follow the /v2/models/<name> KServe v2 API path, so
+    # match on that rather than a bare scheme+netloc which would also match
+    # plain weights URLs.
     url = urlsplit(model)
-    return bool(url.netloc and url.path and url.scheme in {"http", "grpc"})
+    if url.scheme not in _TRITON_SCHEMES:
+        return False
+    return bool(url.netloc) and "/v2/models/" in url.path
 
 
-def _suggest_correction(model: str) -> Optional[str]:
-    """Return a suggested correction for a mistyped alias, or None.
-
-    Catches the common mistake of writing ``yolov11*`` or ``yolov26*``
-    instead of the official ``yolo11*`` / ``yolo26*``.
-    """
-    # Pattern: yolov<digits><size>.pt  where the no-v form is official
-    m = re.match(r"^yolov(\d+)([a-z])\.pt$", model)
+def _suggest_correction(model: str) -> Optional[tuple[str, str]]:
+    """Return (corrected_alias, typo_family) for mistyped yolov11*/yolov26*, or None."""
+    m = _TYPO_RE.match(model)
     if m:
-        candidate = f"yolo{m.group(1)}{m.group(2)}.pt"
+        digits, size = m.group(1), m.group(2)
+        candidate = f"yolo{digits}{size}.pt"
         if candidate in VALID_ALIASES:
-            family = f"yolo{m.group(1)}"
-            return candidate
+            return candidate, f"yolov{digits}"
     return None
 
 
 def _get_ultralytics_weights_dir() -> Optional[Path]:
-    """Read (not write) the current Ultralytics weights directory setting."""
     try:
         from ultralytics import settings
         raw = settings.get("weights_dir", None)
@@ -92,17 +89,17 @@ def _get_ultralytics_weights_dir() -> Optional[Path]:
     return None
 
 
-def _get_ultralytics_asset_stems() -> Optional[set[str]]:
-    """Return the installed Ultralytics asset stem catalogue if available."""
+@lru_cache(maxsize=1)
+def _get_ultralytics_asset_stems() -> Optional[frozenset[str]]:
     try:
         from ultralytics.utils.downloads import GITHUB_ASSETS_STEMS
-        return set(GITHUB_ASSETS_STEMS)
+        return frozenset(GITHUB_ASSETS_STEMS)
     except Exception:
         return None
 
 
+@lru_cache(maxsize=1)
 def _get_ultralytics_version() -> Optional[str]:
-    """Return the installed ultralytics version string, or None."""
     try:
         from ultralytics import __version__
         return __version__
@@ -111,8 +108,7 @@ def _get_ultralytics_version() -> Optional[str]:
 
 
 def _family_of(alias: str) -> Optional[str]:
-    """Extract the family prefix from a normalised alias like 'yolo26n.pt'."""
-    m = re.match(r"^(yolov?\d+)[a-z]\.pt$", alias)
+    m = _FAMILY_RE.match(alias)
     return m.group(1) if m else None
 
 
@@ -171,12 +167,10 @@ def resolve_yolo_model(
     model = model.strip()
     local_path = Path(model)
 
-    # --- 1. Existing local file (absolute or relative) ---
     if local_path.is_file():
         logger.info("YOLO model resolved to local file: %s", local_path)
         return str(local_path)
 
-    # --- 2. Remote / upstream-managed model references ---
     if _is_hub_model(model):
         if not allow_download:
             raise FileNotFoundError(
@@ -186,7 +180,6 @@ def resolve_yolo_model(
         return model
 
     if _is_triton_model(model):
-        # Triton endpoints are remote services, not downloadable weights.
         return model
 
     if _is_remote_weights_url(model):
@@ -197,32 +190,28 @@ def resolve_yolo_model(
             )
         return model
 
-    # Normalise bare stems to .pt for all remaining alias/cache checks.
     normalised = _normalize_stem(model)
 
-    # --- 3. Check inside weights_dir if provided ---
     if weights_dir:
         cached = Path(weights_dir) / normalised
         if cached.is_file():
             logger.info("YOLO model resolved from cache: %s", cached)
             return str(cached)
 
-    # --- 4. Typo detection (before alias validation) ---
     suggestion = _suggest_correction(normalised)
     if suggestion:
-        family = _family_of(suggestion)
+        corrected, typo_family = suggestion
+        official_family = _family_of(corrected)
         raise ValueError(
-            f"Unknown YOLO model {model!r}. Did you mean {suggestion!r}? "
-            f"{family.upper()} uses the naming scheme "
-            f"'{family}<size>.pt', not '{family.replace('yolo', 'yolov')}<size>.pt'."
+            f"Unknown YOLO model {model!r}. Did you mean {corrected!r}? "
+            f"{official_family.upper()} uses the naming scheme "
+            f"'{official_family}<size>.pt', not '{typo_family}<size>.pt'."
         )
 
-    # --- 5. Valid alias ---
     if normalised in VALID_ALIASES:
         _check_installed_alias_support(normalised)
 
         if not allow_download:
-            # Check Ultralytics' configured weights dir (read-only)
             ul_dir = _get_ultralytics_weights_dir()
             if ul_dir:
                 candidate = ul_dir / normalised
@@ -243,10 +232,9 @@ def resolve_yolo_model(
         logger.info(
             "YOLO model %r is a valid alias; Ultralytics will download if needed.",
             normalised,
-            )
+        )
         return normalised
 
-    # --- 6. Not a local file and not a recognized alias ---
     raise ValueError(
         f"YOLO model {model!r} is not an existing file and not a recognized "
         f"Ultralytics detect alias. Supported aliases: "
