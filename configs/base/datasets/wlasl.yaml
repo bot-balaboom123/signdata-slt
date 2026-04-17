@@ -1,0 +1,8 @@
+dataset:
+  name: wlasl
+  download: true
+  manifest: true
+  source:
+    annotation_json: dataset/wlasl/WLASL_v0.3.json
+    split: all
+    availability_policy: drop_unavailable
