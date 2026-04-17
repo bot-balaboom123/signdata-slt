@@ -88,6 +88,9 @@ python -m signdata run configs/jobs/youtube_asl/mediapipe.yaml
 # Extract MMPose landmarks from pre-downloaded How2Sign data (CUDA required)
 python -m signdata run configs/jobs/how2sign/mmpose.yaml
 
+# Validate local WLASL clips, build a manifest from WLASL_v0.3.json, extract MediaPipe landmarks, and package into WebDataset shards
+python -m signdata run configs/jobs/wlasl/mediapipe.yaml
+
 # Override any config value from the command line (e.g. more workers, stop after extraction)
 python -m signdata run configs/jobs/youtube_asl/mediapipe.yaml \
   --override processing.max_workers=8 stop_at=extract
@@ -107,6 +110,7 @@ Both modes produce [WebDataset](https://github.com/webdataset/webdataset) tar sh
 |:--------|:------|:------------|:--------|
 | **[YouTube-ASL](docs/datasets.md#youtube-asl)** | NeurIPS 2023 | 11,000+ videos, 73,000+ segments -- open-domain ASL-English parallel corpus | [Apache-2.0](https://github.com/google-research/google-research/tree/master/youtube_asl) |
 | **[How2Sign](docs/datasets.md#how2sign)** | CVPR 2021 | 80+ hours of instructional ASL in a controlled studio environment | [CC BY-NC 4.0](https://how2sign.github.io/) |
+| **[WLASL](docs/datasets.md#wlasl)** | WACV 2020 | 2,000 glosses and 12,000+ isolated ASL sign videos with local manifest generation | [C-UDA 1.0](https://github.com/dxli94/WLASL/blob/master/C-UDA-1.0.pdf) |
 
 For paper-aligned preprocessing methodology, see [Research-Aligned Preprocessing](docs/research-preprocessing.md).
 
@@ -118,7 +122,7 @@ For paper-aligned preprocessing methodology, see [Research-Aligned Preprocessing
 - [Architecture](docs/architecture.md) -- system design, registry, pipeline flow
 - [Configuration](docs/configuration.md) -- job/experiment layout and CLI overrides
 - [Pipeline Stages](docs/pipeline-stages.md) -- recipe stages and optional stages
-- [Datasets](docs/datasets.md) -- YouTube-ASL vs How2Sign setup
+- [Datasets](docs/datasets.md) -- YouTube-ASL, How2Sign, and WLASL setup
 - [Research-Aligned Preprocessing](docs/research-preprocessing.md) -- paper-aligned preprocessing notes
 
 ## License
