@@ -5,6 +5,7 @@ from typing import List
 
 import numpy as np
 
+from .._cuda_utils import clear_cuda_cache, is_cuda_oom_error
 from ..base import Detection, PersonDetector
 
 logger = logging.getLogger(__name__)
@@ -49,24 +50,7 @@ class MMDetDetector(PersonDetector):
 
         for start in range(0, len(frames), batch_size):
             chunk = frames[start : start + batch_size]
-            if self._use_sequential:
-                batch_results = [
-                    inference_detector(self.detector, f) for f in chunk
-                ]
-            else:
-                try:
-                    batch_results = inference_detector(self.detector, chunk)
-                    if not isinstance(batch_results, (list, tuple)):
-                        batch_results = [batch_results]
-                except Exception:
-                    logger.warning(
-                        "MMDet batched inference failed; falling back to "
-                        "sequential mode for all subsequent frames."
-                    )
-                    self._use_sequential = True
-                    batch_results = [
-                        inference_detector(self.detector, f) for f in chunk
-                    ]
+            batch_results = self._infer_chunk_adaptive(inference_detector, chunk)
 
             for result in batch_results:
                 frame_dets = []
@@ -87,10 +71,51 @@ class MMDetDetector(PersonDetector):
 
                 all_detections.append(frame_dets)
 
+            del batch_results
+
         return all_detections
+
+    def _infer_chunk_adaptive(self, inference_detector, chunk: List[np.ndarray]):
+        try:
+            return self._infer_chunk(inference_detector, chunk)
+        except Exception as exc:
+            if not is_cuda_oom_error(exc) or len(chunk) == 1:
+                raise
+
+            clear_cuda_cache(self.config.device)
+            mid = max(1, len(chunk) // 2)
+            logger.warning(
+                "MMDet inference OOM for batch size %d; retrying as %d + %d",
+                len(chunk), mid, len(chunk) - mid,
+            )
+            return (
+                self._infer_chunk_adaptive(inference_detector, chunk[:mid])
+                + self._infer_chunk_adaptive(inference_detector, chunk[mid:])
+            )
+
+    def _infer_chunk(self, inference_detector, chunk: List[np.ndarray]):
+        if self._use_sequential:
+            return [inference_detector(self.detector, f) for f in chunk]
+
+        try:
+            batch_results = inference_detector(self.detector, chunk)
+            if not isinstance(batch_results, (list, tuple)):
+                batch_results = [batch_results]
+            return list(batch_results)
+        except Exception as exc:
+            if is_cuda_oom_error(exc):
+                clear_cuda_cache(self.config.device)
+                raise
+            logger.warning(
+                "MMDet batched inference failed; falling back to "
+                "sequential mode for all subsequent frames."
+            )
+            self._use_sequential = True
+            return [inference_detector(self.detector, f) for f in chunk]
 
     def close(self) -> None:
         del self.detector
+        clear_cuda_cache(self.config.device)
 
 
 __all__ = ["MMDetDetector"]

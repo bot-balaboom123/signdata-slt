@@ -270,7 +270,7 @@ class TestInstalledAssetSupport:
 class TestYOLOConfigNewFields:
     def test_defaults(self):
         cfg = YOLODetectionConfig()
-        assert cfg.model == "yolov8n.pt"
+        assert cfg.model == "yolo11m.pt"
         assert cfg.allow_download is True
         assert cfg.weights_dir is None
 

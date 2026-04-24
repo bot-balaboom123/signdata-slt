@@ -8,7 +8,7 @@ Covers:
 
 import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -27,12 +27,13 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from signdata.config.schema import (
     Config,
+    MMDetDetectionConfig,
     PathsConfig,
     ProcessingConfig,
     VideoProcessingConfig,
     YOLODetectionConfig,
-    MMDetDetectionConfig,
 )
+from signdata.processors.detection.mmdet.backend import MMDetDetector
 from signdata.processors.detection.validation import union_bbox_tuples
 from signdata.processors.detection.yolo.backend import YOLODetector
 import signdata.processors  # noqa: F401 – trigger registrations
@@ -46,7 +47,7 @@ from signdata.registry import PROCESSOR_REGISTRY
 class TestSchemaDefaults:
     def test_yolo_detection_defaults(self):
         cfg = YOLODetectionConfig()
-        assert cfg.model == "yolov8n.pt"
+        assert cfg.model == "yolo11m.pt"
         assert cfg.confidence_threshold == 0.5
         assert cfg.device == "cpu"
         assert cfg.min_bbox_area == 0.05
@@ -216,6 +217,62 @@ class _StatefulFakeYOLO:
         return [_EmptyResult() for _ in source]
 
 
+class _BatchLimitFakeYOLO:
+    """Fake model that raises CUDA OOM when a predict call is too large."""
+
+    def __init__(self, max_batch_size: int):
+        self.predictor = None
+        self.max_batch_size = max_batch_size
+        self.calls = []
+
+    def predict(self, *, source, device, verbose, half):
+        self.calls.append({
+            "batch_size": len(source),
+            "device": device,
+            "half": half,
+        })
+        if len(source) > self.max_batch_size:
+            raise RuntimeError("CUDA out of memory")
+        return [_EmptyResult() for _ in source]
+
+
+class _EmptyPredInstances:
+    def __len__(self):
+        return 0
+
+
+class _BatchLimitFakeMMDetApis:
+    """Fake MMDet APIs that raise CUDA OOM when a batch is too large."""
+
+    def __init__(self, max_batch_size: int):
+        self.max_batch_size = max_batch_size
+        self.calls = []
+        self.detector = SimpleNamespace(cfg=SimpleNamespace())
+
+    def init_detector(self, config, checkpoint, device):
+        self.init_args = {
+            "config": config,
+            "checkpoint": checkpoint,
+            "device": device,
+        }
+        return self.detector
+
+    def inference_detector(self, detector, source):
+        assert detector is self.detector
+        batch_size = len(source) if isinstance(source, list) else 1
+        self.calls.append(batch_size)
+        if batch_size > self.max_batch_size:
+            raise RuntimeError("CUDA out of memory")
+
+        results = [
+            SimpleNamespace(pred_instances=_EmptyPredInstances())
+            for _ in range(batch_size)
+        ]
+        if isinstance(source, list):
+            return results
+        return results[0]
+
+
 class TestYOLODetectorFP16Policy:
     """Verify CUDA→FP16 policy and real predictor-reset fallback behavior."""
 
@@ -314,3 +371,64 @@ class TestYOLODetectorFP16Policy:
             match="fp16, and the fp32 retry after predictor reset also failed",
         ):
             detector.detect_batch([self._FRAME])
+
+    def test_cuda_oom_retries_with_smaller_batches(self):
+        fake_model = _BatchLimitFakeYOLO(max_batch_size=2)
+        cfg = YOLODetectionConfig(
+            model="yolov8n.pt",
+            device="cuda:0",
+            batch_size=4,
+        )
+        with patch("torch.cuda.is_available", return_value=True):
+            with patch("signdata.processors.detection.yolo.backend.YOLO", return_value=fake_model):
+                detector = YOLODetector(cfg)
+
+        with patch("torch.cuda.empty_cache") as empty_cache:
+            detections = detector.detect_batch([self._FRAME] * 4)
+
+        assert len(detections) == 4
+        assert [call["batch_size"] for call in fake_model.calls] == [4, 2, 2]
+        assert empty_cache.called
+
+
+class TestMMDetDetectorOOMPolicy:
+    _FRAME = np.zeros((100, 100, 3), dtype=np.uint8)
+
+    def test_cuda_oom_retries_with_smaller_batches(self):
+        fake_apis = _BatchLimitFakeMMDetApis(max_batch_size=2)
+        fake_mmdet = ModuleType("mmdet")
+        fake_mmdet.__path__ = []
+        fake_mmdet_apis = ModuleType("mmdet.apis")
+        fake_mmdet_apis.init_detector = fake_apis.init_detector
+        fake_mmdet_apis.inference_detector = fake_apis.inference_detector
+        fake_mmdet.apis = fake_mmdet_apis
+
+        fake_mmpose = ModuleType("mmpose")
+        fake_mmpose.__path__ = []
+        fake_mmpose_utils = ModuleType("mmpose.utils")
+        fake_mmpose_utils.adapt_mmdet_pipeline = lambda cfg: cfg
+        fake_mmpose.utils = fake_mmpose_utils
+
+        cfg = MMDetDetectionConfig(
+            det_model_config="model.py",
+            det_model_checkpoint="model.pth",
+            device="cuda:0",
+            batch_size=4,
+        )
+
+        with patch.dict(
+            sys.modules,
+            {
+                "mmdet": fake_mmdet,
+                "mmdet.apis": fake_mmdet_apis,
+                "mmpose": fake_mmpose,
+                "mmpose.utils": fake_mmpose_utils,
+            },
+        ):
+            detector = MMDetDetector(cfg)
+            with patch("torch.cuda.empty_cache") as empty_cache:
+                detections = detector.detect_batch([self._FRAME] * 4)
+
+        assert len(detections) == 4
+        assert fake_apis.calls == [4, 2, 2]
+        assert empty_cache.called

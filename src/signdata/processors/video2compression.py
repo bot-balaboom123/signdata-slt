@@ -13,13 +13,14 @@ import gc
 import logging
 import os
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 
 from .base import BaseProcessor
-from .detection import create_detector, union_bbox_tuples
-from .video.ffmpeg import FfmpegSamplingParams, ffmpeg_pipe_frames, clip_and_crop
+from .detection import create_detector
+from .detection.base import Detection
+from .video.ffmpeg import FfmpegSamplingParams, iter_ffmpeg_frame_batches, clip_and_crop
 from ..registry import register_processor
 from ..utils.manifest import resolve_video_path
 
@@ -85,6 +86,26 @@ def _build_video_tasks(df, video_dir: str) -> List[Tuple[str, Path]]:
         tasks.append((video_path, _get_output_relpath(row)))
 
     return tasks
+
+
+def _update_union_bbox(
+    current: Optional[Tuple[float, float, float, float]],
+    detections: List[List[Detection]],
+) -> Optional[Tuple[float, float, float, float]]:
+    """Fold detection bboxes into an existing union bbox."""
+    for frame_dets in detections:
+        for det in frame_dets:
+            x1, y1, x2, y2 = det.bbox
+            if current is None:
+                current = (x1, y1, x2, y2)
+            else:
+                current = (
+                    min(current[0], x1),
+                    min(current[1], y1),
+                    max(current[2], x2),
+                    max(current[3], y2),
+                )
+    return current
 
 
 @register_processor("video2compression")
@@ -165,32 +186,29 @@ class Video2CompressionProcessor(BaseProcessor):
                         errors += 1
                         continue
 
-                    # Pass 1: decode frames for detection (whole video)
-                    frames = ffmpeg_pipe_frames(
-                        video_path, 0.0, duration, ffmpeg_params,
-                    )
+                    batch_size = getattr(cfg.detection_config, "batch_size", 16)
+                    bbox: Optional[Tuple[float, float, float, float]] = None
+                    decoded_frames = 0
 
-                    if not frames:
+                    # Pass 1: stream frames for detection (whole video)
+                    for frames in iter_ffmpeg_frame_batches(
+                        video_path, 0.0, duration, ffmpeg_params,
+                        batch_size=batch_size,
+                    ):
+                        decoded_frames += len(frames)
+                        detections = detector.detect_batch(frames)
+                        bbox = _update_union_bbox(bbox, detections)
+                        del detections
+                        del frames
+
+                    if decoded_frames == 0:
                         errors += 1
                         continue
 
-                    # Detect persons
-                    detections = detector.detect_batch(frames)
-
-                    # Flatten ALL detections across all frames into bbox tuples
-                    all_bboxes = [
-                        det.bbox
-                        for frame_dets in detections
-                        for det in frame_dets
-                    ]
-
-                    if not all_bboxes:
+                    if bbox is None:
                         self.logger.debug("No detections, skipping: %s", output_label)
                         skipped += 1
                         continue
-
-                    # Compute union bbox covering every person in every frame
-                    bbox = union_bbox_tuples(all_bboxes)
 
                     # Pass 2: crop whole video with union bbox
                     ok = clip_and_crop(

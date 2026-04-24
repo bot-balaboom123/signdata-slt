@@ -5,6 +5,7 @@ from typing import List
 
 import numpy as np
 
+from .._cuda_utils import clear_cuda_cache, is_cuda_device, is_cuda_oom_error
 from ..base import Detection, PersonDetector
 from .resolver import VALID_ALIASES, resolve_yolo_model
 
@@ -18,10 +19,6 @@ except ImportError:
 
 
 PERSON_CLASS_ID = 0
-
-
-def _is_cuda_device(device: str) -> bool:
-    return str(device).startswith("cuda")
 
 
 class YOLODetector(PersonDetector):
@@ -39,7 +36,7 @@ class YOLODetector(PersonDetector):
                 "Install with: pip install ultralytics"
             )
 
-        if _is_cuda_device(config.device):
+        if is_cuda_device(config.device):
             import torch
 
             if not torch.cuda.is_available():
@@ -50,7 +47,7 @@ class YOLODetector(PersonDetector):
                 )
 
         self.config = config
-        self.use_fp16 = _is_cuda_device(config.device)
+        self.use_fp16 = is_cuda_device(config.device)
 
         resolved_model = resolve_yolo_model(
             config.model,
@@ -107,6 +104,71 @@ class YOLODetector(PersonDetector):
             half=half,
         )
 
+    def _predict_with_precision_fallback(self, chunk: List[np.ndarray]):
+        if self.use_fp16:
+            try:
+                return self._predict_chunk(chunk, half=True)
+            except Exception as fp16_exc:
+                if is_cuda_oom_error(fp16_exc):
+                    clear_cuda_cache(self.config.device)
+                    raise
+
+                logger.warning(
+                    "FP16 inference failed (%s); resetting the Ultralytics "
+                    "predictor and retrying with half=False for the rest of "
+                    "this run.",
+                    fp16_exc,
+                )
+                self._reset_predictor()
+                try:
+                    results = self._predict_chunk(chunk, half=False)
+                except Exception as fp32_exc:
+                    if is_cuda_oom_error(fp32_exc):
+                        self.use_fp16 = False
+                        clear_cuda_cache(self.config.device)
+                    raise RuntimeError(
+                        "YOLO inference failed with fp16, and the fp32 "
+                        "retry after predictor reset also failed. "
+                        f"fp16 error: {fp16_exc}; fp32 retry error: {fp32_exc}"
+                    ) from fp32_exc
+                self.use_fp16 = False
+                return results
+
+        return self._predict_chunk(chunk, half=False)
+
+    def _predict_chunk_adaptive(self, chunk: List[np.ndarray]):
+        try:
+            return list(self._predict_with_precision_fallback(chunk))
+        except Exception as exc:
+            if not is_cuda_oom_error(exc):
+                raise
+            if len(chunk) == 1:
+                # Last-ditch: if a single frame OOMs while FP16 is still on,
+                # drop to FP32 once before giving up. FP32 uses more memory
+                # but avoids FP16 allocator fragmentation, which is a common
+                # cause of single-frame OOMs after many batches.
+                if self.use_fp16:
+                    logger.warning(
+                        "YOLO OOM at batch size 1 with FP16; disabling FP16 "
+                        "and retrying in FP32."
+                    )
+                    self.use_fp16 = False
+                    self._reset_predictor()
+                    clear_cuda_cache(self.config.device)
+                    return list(self._predict_chunk(chunk, half=False))
+                raise
+
+            clear_cuda_cache(self.config.device)
+            mid = max(1, len(chunk) // 2)
+            logger.warning(
+                "YOLO inference OOM for batch size %d; retrying as %d + %d",
+                len(chunk), mid, len(chunk) - mid,
+            )
+            return (
+                self._predict_chunk_adaptive(chunk[:mid])
+                + self._predict_chunk_adaptive(chunk[mid:])
+            )
+
     def detect_batch(self, frames: List[np.ndarray]) -> List[List[Detection]]:
         if not frames:
             return []
@@ -116,29 +178,7 @@ class YOLODetector(PersonDetector):
 
         for start in range(0, len(frames), batch_size):
             chunk = frames[start : start + batch_size]
-
-            if self.use_fp16:
-                try:
-                    results = self._predict_chunk(chunk, half=True)
-                except Exception as fp16_exc:
-                    logger.warning(
-                        "FP16 inference failed (%s); resetting the Ultralytics "
-                        "predictor and retrying with half=False for the rest of "
-                        "this run.",
-                        fp16_exc,
-                    )
-                    self._reset_predictor()
-                    try:
-                        results = self._predict_chunk(chunk, half=False)
-                    except Exception as fp32_exc:
-                        raise RuntimeError(
-                            "YOLO inference failed with fp16, and the fp32 "
-                            "retry after predictor reset also failed. "
-                            f"fp16 error: {fp16_exc}; fp32 retry error: {fp32_exc}"
-                        ) from fp32_exc
-                    self.use_fp16 = False
-            else:
-                results = self._predict_chunk(chunk, half=False)
+            results = self._predict_chunk_adaptive(chunk)
 
             for i, result in enumerate(results):
                 h, w = chunk[i].shape[:2]
@@ -173,10 +213,13 @@ class YOLODetector(PersonDetector):
 
                 all_detections.append(frame_dets)
 
+            del results
+
         return all_detections
 
     def close(self) -> None:
         del self.model
+        clear_cuda_cache(self.config.device)
 
 
 __all__ = ["YOLO", "YOLODetector"]
