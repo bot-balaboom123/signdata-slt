@@ -31,8 +31,10 @@ from signdata.registry import PROCESSOR_REGISTRY
 class _FakeDetector:
     def __init__(self):
         self.closed = False
+        self.batch_sizes = []
 
     def detect_batch(self, frames):
+        self.batch_sizes.append(len(frames))
         return [
             [Detection(bbox=(1.0, 2.0, 20.0, 30.0), confidence=0.9)]
             for _ in frames
@@ -95,9 +97,9 @@ class TestVideo2CompressionProcessor:
             "signdata.processors.video2compression._get_video_duration",
             return_value=12.5,
         ), patch(
-            "signdata.processors.video2compression.ffmpeg_pipe_frames",
-            return_value=[frame],
-        ) as pipe_mock, patch(
+            "signdata.processors.video2compression.iter_ffmpeg_frame_batches",
+            return_value=iter([[frame], [frame]]),
+        ) as frame_iter_mock, patch(
             "signdata.processors.video2compression.clip_and_crop",
             return_value=True,
         ) as crop_mock:
@@ -109,11 +111,12 @@ class TestVideo2CompressionProcessor:
         assert result.stats["processing"]["skipped"] == 0
         assert result.stats["processing"]["errors"] == 0
         assert fake_detector.closed
+        assert fake_detector.batch_sizes == [1, 1]
 
-        pipe_args = pipe_mock.call_args.args
-        assert pipe_args[0] == str(videos_dir / "cam_1.mp4")
-        assert pipe_args[1] == 0.0
-        assert pipe_args[2] == 12.5
+        frame_iter_args = frame_iter_mock.call_args.args
+        assert frame_iter_args[0] == str(videos_dir / "cam_1.mp4")
+        assert frame_iter_args[1] == 0.0
+        assert frame_iter_args[2] == 12.5
 
         crop_args = crop_mock.call_args.args
         assert crop_args[0] == str(videos_dir / "cam_1.mp4")
@@ -153,8 +156,8 @@ class TestVideo2CompressionProcessor:
             "signdata.processors.video2compression._get_video_duration",
             return_value=5.0,
         ), patch(
-            "signdata.processors.video2compression.ffmpeg_pipe_frames",
-            return_value=[frame],
+            "signdata.processors.video2compression.iter_ffmpeg_frame_batches",
+            return_value=iter([[frame]]),
         ), patch(
             "signdata.processors.video2compression.clip_and_crop",
             return_value=True,
@@ -164,6 +167,55 @@ class TestVideo2CompressionProcessor:
         assert crop_mock.call_args.args[6].endswith(
             "compressed/split_a/session_1/clip_source.mp4"
         )
+
+    def test_streaming_batches_are_folded_into_one_union_bbox(self, tmp_path):
+        videos_dir = tmp_path / "videos"
+        videos_dir.mkdir()
+        (videos_dir / "cam_1.mp4").touch()
+
+        df = pd.DataFrame({
+            "VIDEO_ID": ["vid_a"],
+            "VIDEO_NAME": ["cam_1"],
+            "SAMPLE_ID": ["seg_000"],
+        })
+
+        cfg = self._make_config(tmp_path)
+        processor = Video2CompressionProcessor(cfg)
+        ctx = PipelineContext(
+            config=cfg,
+            dataset=How2SignDataset(),
+            manifest_df=df,
+            videos_dir=videos_dir,
+            output_dir=tmp_path / "output" / "compression",
+        )
+
+        class BatchSensitiveDetector(_FakeDetector):
+            def detect_batch(self, frames):
+                self.batch_sizes.append(len(frames))
+                if len(self.batch_sizes) == 1:
+                    return [[Detection(bbox=(10.0, 20.0, 30.0, 40.0), confidence=0.9)]]
+                return [[Detection(bbox=(1.0, 2.0, 50.0, 60.0), confidence=0.9)]]
+
+        fake_detector = BatchSensitiveDetector()
+        frame = np.zeros((8, 8, 3), dtype=np.uint8)
+
+        with patch(
+            "signdata.processors.video2compression.create_detector",
+            return_value=fake_detector,
+        ), patch(
+            "signdata.processors.video2compression._get_video_duration",
+            return_value=5.0,
+        ), patch(
+            "signdata.processors.video2compression.iter_ffmpeg_frame_batches",
+            return_value=iter([[frame], [frame]]),
+        ), patch(
+            "signdata.processors.video2compression.clip_and_crop",
+            return_value=True,
+        ) as crop_mock:
+            processor.run(ctx)
+
+        assert fake_detector.batch_sizes == [1, 1]
+        assert crop_mock.call_args.args[3] == (1.0, 2.0, 50.0, 60.0)
 
 
 class TestVideo2CompressionRegistration:

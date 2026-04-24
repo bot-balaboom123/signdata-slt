@@ -1,10 +1,19 @@
 """YOLO person detection backend."""
 
 import logging
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 
+from .._cuda_utils import (
+    clear_cuda_cache,
+    describe_device,
+    format_cuda_oom_message,
+    format_effective_batch_size_message,
+    is_cuda_device,
+    is_cuda_oom_error,
+    validate_cuda_device,
+)
 from ..base import Detection, PersonDetector
 from .resolver import VALID_ALIASES, resolve_yolo_model
 
@@ -18,10 +27,6 @@ except ImportError:
 
 
 PERSON_CLASS_ID = 0
-
-
-def _is_cuda_device(device: str) -> bool:
-    return str(device).startswith("cuda")
 
 
 class YOLODetector(PersonDetector):
@@ -39,18 +44,22 @@ class YOLODetector(PersonDetector):
                 "Install with: pip install ultralytics"
             )
 
-        if _is_cuda_device(config.device):
-            import torch
-
-            if not torch.cuda.is_available():
-                raise RuntimeError(
-                    f"YOLO device {config.device!r} requested but CUDA is unavailable. "
-                    "Verify your PyTorch CUDA install and GPU visibility, or "
-                    "switch detection_config.device to 'cpu'."
-                )
+        validate_cuda_device(config.device)
 
         self.config = config
-        self.use_fp16 = _is_cuda_device(config.device)
+        import torch
+
+        self._predict_device = torch.device(config.device)
+        if self._predict_device.type == "cuda":
+            predict_index = 0 if self._predict_device.index is None else self._predict_device.index
+            self._expected_runtime_device = f"cuda:{predict_index}"
+        else:
+            self._expected_runtime_device = str(self._predict_device)
+        self.device_label = describe_device(config.device)
+        self.use_fp16 = is_cuda_device(config.device)
+        self._effective_batch_size = int(config.batch_size)
+        self._reported_effective_batch_size = self._effective_batch_size
+        self._runtime_device_verified = False
 
         resolved_model = resolve_yolo_model(
             config.model,
@@ -88,9 +97,67 @@ class YOLODetector(PersonDetector):
             raise
 
         logger.info(
-            "YOLO detector loaded: %s (resolved: %s) on %s (fp16=%s)",
-            config.model, resolved_model, config.device, self.use_fp16,
+            "YOLO detector loaded: %s (resolved: %s) on %s "
+            "(fp16=%s, configured_batch_size=%d)",
+            config.model,
+            resolved_model,
+            self.device_label,
+            self.use_fp16,
+            self.config.batch_size,
         )
+
+    def _remember_safe_batch_size(self, safe_batch_size: int) -> None:
+        if safe_batch_size <= 0:
+            return
+
+        previous_batch_size = self._effective_batch_size
+        new_batch_size = min(previous_batch_size, safe_batch_size)
+        if new_batch_size >= previous_batch_size:
+            return
+
+        self._effective_batch_size = new_batch_size
+
+    def _report_effective_batch_size_if_needed(self) -> None:
+        current_batch_size = self._effective_batch_size
+        previous_batch_size = self._reported_effective_batch_size
+        if current_batch_size >= previous_batch_size:
+            return
+
+        self._reported_effective_batch_size = current_batch_size
+        logger.warning(
+            format_effective_batch_size_message(
+                backend="YOLO",
+                device=self.config.device,
+                previous_batch_size=previous_batch_size,
+                new_batch_size=current_batch_size,
+            )
+        )
+
+    def _record_oom_ceiling(self, oom_batch_size: int) -> None:
+        """Cap effective batch size after an OOM at ``oom_batch_size``.
+
+        Called eagerly so the learned ceiling persists across videos even
+        if the recursive retry ultimately raises a terminal OOM.
+        """
+        if oom_batch_size <= 1:
+            return
+        self._remember_safe_batch_size(max(1, oom_batch_size // 2))
+
+    def _raise_terminal_oom(self, attempted_batch_size: int, exc: BaseException) -> None:
+        learned_batch_size = None
+        if self._effective_batch_size < self.config.batch_size:
+            learned_batch_size = self._effective_batch_size
+
+        raise RuntimeError(
+            format_cuda_oom_message(
+                backend="YOLO",
+                device=self.config.device,
+                configured_batch_size=self.config.batch_size,
+                attempted_batch_size=attempted_batch_size,
+                model=self.config.model,
+                learned_batch_size=learned_batch_size,
+            )
+        ) from exc
 
     def _reset_predictor(self) -> None:
         # Ultralytics reuses the existing predictor as long as the device stays
@@ -98,47 +165,149 @@ class YOLODetector(PersonDetector):
         # we pass half=False on a later call. Null it out to force a rebuild.
         if hasattr(self.model, "predictor"):
             self.model.predictor = None
+        self._runtime_device_verified = False
+
+    @staticmethod
+    def _canonical_device_text(device) -> str:
+        text = str(device)
+        if text == "cuda":
+            return "cuda:0"
+        return text
+
+    def _verify_runtime_device(self) -> None:
+        if self._runtime_device_verified:
+            return
+
+        predictor = getattr(self.model, "predictor", None)
+        if predictor is None:
+            return
+
+        runtime_device = getattr(predictor, "device", None)
+        if runtime_device is None:
+            logger.debug("YOLO predictor device is unavailable for verification.")
+            return
+
+        expected_device = self._expected_runtime_device
+        actual_device = self._canonical_device_text(runtime_device)
+        backend_device = getattr(getattr(predictor, "model", None), "device", None)
+        backend_suffix = ""
+        if backend_device is not None:
+            backend_suffix = f"; backend={describe_device(str(backend_device))}"
+
+        if actual_device != expected_device:
+            raise RuntimeError(
+                "YOLO runtime device mismatch: configured "
+                f"{describe_device(expected_device)} but Ultralytics predictor "
+                f"initialized on {describe_device(actual_device)}{backend_suffix}."
+            )
+
+        logger.info(
+            "YOLO runtime device verified: configured=%s predictor=%s%s",
+            describe_device(expected_device),
+            describe_device(actual_device),
+            backend_suffix,
+        )
+        self._runtime_device_verified = True
 
     def _predict_chunk(self, chunk: List[np.ndarray], *, half: bool):
-        return self.model.predict(
+        results = self.model.predict(
             source=chunk,
-            device=self.config.device,
+            device=self._predict_device,
             verbose=False,
             half=half,
         )
+        self._verify_runtime_device()
+        return results
+
+    def _predict_with_precision_fallback(self, chunk: List[np.ndarray]):
+        if self.use_fp16:
+            try:
+                return self._predict_chunk(chunk, half=True)
+            except Exception as fp16_exc:
+                if is_cuda_oom_error(fp16_exc):
+                    clear_cuda_cache(self.config.device)
+                    raise
+
+                logger.warning(
+                    "FP16 inference failed (%s); resetting the Ultralytics "
+                    "predictor and retrying with half=False for the rest of "
+                    "this run.",
+                    fp16_exc,
+                )
+                self._reset_predictor()
+                try:
+                    results = self._predict_chunk(chunk, half=False)
+                except Exception as fp32_exc:
+                    if is_cuda_oom_error(fp32_exc):
+                        self.use_fp16 = False
+                        clear_cuda_cache(self.config.device)
+                    raise RuntimeError(
+                        "YOLO inference failed with fp16, and the fp32 "
+                        "retry after predictor reset also failed. "
+                        f"fp16 error: {fp16_exc}; fp32 retry error: {fp32_exc}"
+                    ) from fp32_exc
+                self.use_fp16 = False
+                return results
+
+        return self._predict_chunk(chunk, half=False)
+
+    def _predict_chunk_adaptive(
+        self,
+        chunk: List[np.ndarray],
+    ) -> Tuple[List, int]:
+        try:
+            return list(self._predict_with_precision_fallback(chunk)), len(chunk)
+        except Exception as exc:
+            if not is_cuda_oom_error(exc):
+                raise
+            if len(chunk) == 1:
+                # Last-ditch: if a single frame OOMs while FP16 is still on,
+                # drop to FP32 once before giving up. FP32 uses more memory
+                # but avoids FP16 allocator fragmentation, which is a common
+                # cause of single-frame OOMs after many batches.
+                if self.use_fp16:
+                    logger.warning(
+                        "YOLO OOM at batch size 1 with FP16; disabling FP16 "
+                        "and retrying in FP32."
+                    )
+                    self.use_fp16 = False
+                    self._reset_predictor()
+                    clear_cuda_cache(self.config.device)
+                    try:
+                        return list(self._predict_chunk(chunk, half=False)), 1
+                    except Exception as retry_exc:
+                        if is_cuda_oom_error(retry_exc):
+                            clear_cuda_cache(self.config.device)
+                            self._raise_terminal_oom(1, retry_exc)
+                        raise
+                self._raise_terminal_oom(1, exc)
+
+            clear_cuda_cache(self.config.device)
+            self._record_oom_ceiling(len(chunk))
+            mid = max(1, len(chunk) // 2)
+            logger.debug(
+                "YOLO inference OOM for batch size %d; retrying as %d + %d",
+                len(chunk), mid, len(chunk) - mid,
+            )
+            left_results, left_safe = self._predict_chunk_adaptive(chunk[:mid])
+            right_results, right_safe = self._predict_chunk_adaptive(chunk[mid:])
+            safe_batch_size = max(left_safe, right_safe)
+            self._remember_safe_batch_size(safe_batch_size)
+            return left_results + right_results, safe_batch_size
 
     def detect_batch(self, frames: List[np.ndarray]) -> List[List[Detection]]:
         if not frames:
             return []
 
-        batch_size = self.config.batch_size
         all_detections: List[List[Detection]] = []
+        start = 0
 
-        for start in range(0, len(frames), batch_size):
+        while start < len(frames):
+            batch_size = max(1, self._effective_batch_size)
             chunk = frames[start : start + batch_size]
-
-            if self.use_fp16:
-                try:
-                    results = self._predict_chunk(chunk, half=True)
-                except Exception as fp16_exc:
-                    logger.warning(
-                        "FP16 inference failed (%s); resetting the Ultralytics "
-                        "predictor and retrying with half=False for the rest of "
-                        "this run.",
-                        fp16_exc,
-                    )
-                    self._reset_predictor()
-                    try:
-                        results = self._predict_chunk(chunk, half=False)
-                    except Exception as fp32_exc:
-                        raise RuntimeError(
-                            "YOLO inference failed with fp16, and the fp32 "
-                            "retry after predictor reset also failed. "
-                            f"fp16 error: {fp16_exc}; fp32 retry error: {fp32_exc}"
-                        ) from fp32_exc
-                    self.use_fp16 = False
-            else:
-                results = self._predict_chunk(chunk, half=False)
+            chunk_len = len(chunk)
+            results, _ = self._predict_chunk_adaptive(chunk)
+            self._report_effective_batch_size_if_needed()
 
             for i, result in enumerate(results):
                 h, w = chunk[i].shape[:2]
@@ -173,10 +342,14 @@ class YOLODetector(PersonDetector):
 
                 all_detections.append(frame_dets)
 
+            del results
+            start += chunk_len
+
         return all_detections
 
     def close(self) -> None:
         del self.model
+        clear_cuda_cache(self.config.device)
 
 
 __all__ = ["YOLO", "YOLODetector"]
