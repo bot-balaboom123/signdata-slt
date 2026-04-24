@@ -1,6 +1,6 @@
-"""Tests for text normalization (text.py)."""
+"""Tests for dataset-shared text normalization."""
 
-from signdata.utils.text import normalize_text
+from signdata.datasets._ingestion.text import normalize_text
 
 
 class TestNormalizeText:

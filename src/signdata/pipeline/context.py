@@ -48,6 +48,7 @@ class PipelineContext:
 
     def load_manifest(self, manifest_path: str) -> None:
         """Load an existing manifest (used when dataset.manifest is false)."""
-        import pandas as pd
+        from ..utils.manifest import read_manifest
+
         self.manifest_path = Path(manifest_path)
-        self.manifest_df = pd.read_csv(manifest_path, sep="\t")
+        self.manifest_df = read_manifest(manifest_path, normalize_columns=True)

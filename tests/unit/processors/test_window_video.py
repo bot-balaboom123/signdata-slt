@@ -89,7 +89,7 @@ class TestGenerateWindows:
         assert windows[3]["START"] == 15.0
         assert windows[3]["END"] == 18.0  # 3s >= 2s min
 
-    def test_shared_metadata_copied(self):
+    def test_ingestion_metadata_copied(self):
         windows = generate_windows(
             video_id="vid1",
             start=0.0, end=10.0,

@@ -2,7 +2,7 @@
 
 import os
 
-from signdata.utils.files import get_filenames, get_video_filenames
+from signdata.utils.video import get_filenames, get_video_filenames
 
 
 class TestGetVideoFilenames:

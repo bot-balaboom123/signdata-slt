@@ -4,7 +4,7 @@ import logging
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Iterator, List, Optional, Tuple
 
 import numpy as np
 
@@ -43,36 +43,66 @@ def ffmpeg_pipe_frames(
     Returns:
         List of BGR frames as numpy arrays.
     """
+    try:
+        frames: List[np.ndarray] = []
+        for batch in iter_ffmpeg_frame_batches(
+            video_path, start_sec, end_sec, params, batch_size=64,
+            width=width, height=height,
+        ):
+            frames.extend(batch)
+        return frames
+    except Exception as e:
+        logger.error("ffmpeg pipe error: %s", e)
+        return []
+
+
+def iter_ffmpeg_frame_batches(
+    video_path: str,
+    start_sec: float,
+    end_sec: float,
+    params: FfmpegSamplingParams,
+    batch_size: int,
+    width: int = 0,
+    height: int = 0,
+) -> Iterator[List[np.ndarray]]:
+    """Stream decoded frames from ffmpeg in bounded-size batches.
+
+    Unlike :func:`ffmpeg_pipe_frames`, this function does not buffer the full
+    rawvideo stream or the full decoded frame list in memory.
+    """
     import cv2
 
-    # Auto-detect dimensions if not provided
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+
     source_fps = 0.0
-    if width == 0 or height == 0:
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            return []
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return
+    try:
+        if width == 0 or height == 0:
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         source_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+    finally:
         cap.release()
-    else:
-        cap = cv2.VideoCapture(video_path)
-        if cap.isOpened():
-            source_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
-            cap.release()
+
+    if width <= 0 or height <= 0:
+        return
 
     duration = end_sec - start_sec
     effective_fps = resolve_effective_sample_fps(source_fps, params.sample_rate)
 
-    # Build ffmpeg command
+    # -hide_banner + -nostats prevent ffmpeg from filling the stderr PIPE
+    # buffer and deadlocking the streaming read loop below.
     cmd = [
         "ffmpeg", "-y",
+        "-hide_banner", "-nostats",
         "-ss", str(start_sec),
         "-i", video_path,
         "-t", str(duration),
     ]
 
-    # Apply FPS filter
     vf_filters = []
     if effective_fps is not None:
         vf_filters.append(f"fps={effective_fps}")
@@ -87,36 +117,54 @@ def ffmpeg_pipe_frames(
         "pipe:1",
     ])
 
+    proc = None
     try:
-        proc = subprocess.run(
-            cmd, capture_output=True, timeout=120,
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
-        if proc.returncode != 0:
-            logger.error("ffmpeg error: %s", proc.stderr.decode()[:200])
-            return []
+        if proc.stdout is None:
+            raise RuntimeError("ffmpeg stdout pipe was not created")
 
-        raw = proc.stdout
         frame_size = width * height * 3
-        if len(raw) < frame_size:
-            return []
+        batch: List[np.ndarray] = []
 
-        n_frames = len(raw) // frame_size
-        frames = []
-        for i in range(n_frames):
-            frame = np.frombuffer(
-                raw[i * frame_size:(i + 1) * frame_size],
-                dtype=np.uint8,
-            ).reshape(height, width, 3).copy()
-            frames.append(frame)
+        while True:
+            raw = proc.stdout.read(frame_size)
+            if not raw:
+                break
+            if len(raw) != frame_size:
+                logger.warning(
+                    "ffmpeg produced a partial frame for %s; dropping trailing bytes",
+                    video_path,
+                )
+                break
 
-        return frames
+            frame = np.frombuffer(raw, dtype=np.uint8).reshape(
+                height, width, 3,
+            ).copy()
+            batch.append(frame)
 
-    except subprocess.TimeoutExpired:
-        logger.error("ffmpeg timed out for %s", video_path)
-        return []
-    except Exception as e:
-        logger.error("ffmpeg pipe error: %s", e)
-        return []
+            if len(batch) >= batch_size:
+                yield batch
+                batch = []
+
+        if batch:
+            yield batch
+
+        stderr = b""
+        if proc.stderr is not None:
+            stderr = proc.stderr.read()
+        returncode = proc.wait()
+        if returncode != 0:
+            message = stderr.decode(errors="replace")[:200]
+            raise RuntimeError(f"ffmpeg error: {message}")
+
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait()
 
 
 def clip_and_crop(

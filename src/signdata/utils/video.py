@@ -1,9 +1,17 @@
-"""Video processing utilities."""
+"""Video processing utilities for the pipeline.
 
+Duration/FPS probing for dataset ingestion has moved to
+``signdata.datasets._ingestion.media``.
+"""
+
+import logging
 import os
-from typing import Optional
+from glob import glob
+from typing import List, Optional
 
 import cv2
+
+logger = logging.getLogger(__name__)
 
 
 def validate_video_file(video_path: str) -> bool:
@@ -17,19 +25,6 @@ def validate_video_file(video_path: str) -> bool:
         return is_valid
     except Exception:
         return False
-
-
-def get_video_fps(video_path: str) -> float:
-    """Return video FPS (frames per second) as float."""
-    try:
-        video_capture = cv2.VideoCapture(video_path)
-        if not video_capture.isOpened():
-            return 0.0
-        fps = video_capture.get(cv2.CAP_PROP_FPS) or 0.0
-        video_capture.release()
-        return float(fps)
-    except Exception:
-        return 0.0
 
 
 def resolve_effective_sample_fps(
@@ -83,3 +78,19 @@ class FPSSampler:
             self.acc -= 1.0
             return True
         return False
+
+
+def get_video_filenames(directory: str, pattern: str = "*.mp4") -> List[str]:
+    """Retrieve video stems from a directory matching *pattern*."""
+    return [
+        os.path.splitext(os.path.basename(f))[0]
+        for f in glob(os.path.join(directory, pattern))
+    ]
+
+
+def get_filenames(directory: str, pattern: str, extension: str) -> List[str]:
+    """Retrieve file stems from *directory* matching ``<pattern>.<extension>``."""
+    return [
+        os.path.splitext(os.path.basename(f))[0]
+        for f in glob(os.path.join(directory, f"{pattern}.{extension}"))
+    ]

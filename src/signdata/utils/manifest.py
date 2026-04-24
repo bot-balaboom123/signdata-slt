@@ -117,7 +117,7 @@ def read_manifest(
     if not path.exists():
         raise FileNotFoundError(f"Manifest file not found: {path}")
 
-    df = pd.read_csv(path, delimiter="\t", on_bad_lines="skip")
+    df = pd.read_csv(path, delimiter="\t", on_bad_lines="warn")
 
     if normalize_columns:
         df = _normalize_columns(df)

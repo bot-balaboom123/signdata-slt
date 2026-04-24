@@ -70,6 +70,23 @@ class TestPipelineContext:
         assert ctx.manifest_df is not None
         assert len(ctx.manifest_df) == 1
 
+    def test_load_manifest_normalizes_legacy_columns(self, tmp_path):
+        manifest_path = tmp_path / "manifest.csv"
+        manifest_path.write_text(
+            "VIDEO_NAME\tSENTENCE_NAME\tSTART_REALIGNED\tEND_REALIGNED\n"
+            "v1\ts1\t0.0\t1.0\n"
+        )
+
+        cfg = Config(dataset={"name": "youtube_asl"})
+        ctx = PipelineContext(config=cfg, dataset=YouTubeASLDataset())
+        ctx.load_manifest(str(manifest_path))
+
+        assert ctx.manifest_df is not None
+        assert "VIDEO_ID" in ctx.manifest_df.columns
+        assert "SAMPLE_ID" in ctx.manifest_df.columns
+        assert "START" in ctx.manifest_df.columns
+        assert "END" in ctx.manifest_df.columns
+
 
 # ── PipelineRunner init ───────────────────────────────────────────────────
 

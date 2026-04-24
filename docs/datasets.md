@@ -66,16 +66,21 @@ python -m signdata run configs/jobs/wlasl/video.yaml
 
 **Setup:**
 1. Download and preprocess WLASL clips with the official [start-kit repository](https://github.com/dxli94/WLASL)
-2. Place `WLASL_v0.3.json` at `dataset/wlasl/WLASL_v0.3.json` or override `dataset.source.annotation_json`
+2. Place `WLASL_v0.3.json` at `dataset/wlasl/WLASL_v0.3.json` or override `dataset.source.metadata_json`
 3. Place one preprocessed clip per `video_id` under `paths.videos` (default: `dataset/wlasl/videos/`)
-4. Optional: set `dataset.source.split` to `train`, `val`, `test`, or `all`, and tune `dataset.source.availability_policy` for missing local clips
+4. The provided base config keeps `dataset.source.download_mode: validate` for local preprocessed clips; optionally tune `dataset.source.split`, `dataset.source.subset`, and `dataset.source.availability_policy`
 
 The WLASL dataset adapter uses `dataset.download` as a validation step for
 local annotation and video files; it does not fetch remote data.
 
 ## Adding a New Dataset
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md#adding-a-new-dataset) for step-by-step instructions and code examples.
+All datasets must use the package layout
+`src/signdata/datasets/<dataset_name>/` with `adapter.py`, `source.py`, and
+`manifest.py` as the default entry files.
+
+See [CONTRIBUTING.md](../CONTRIBUTING.md#adding-a-new-dataset) for the
+required structure, responsibilities, and code template.
 
 ---
 

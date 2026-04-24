@@ -123,6 +123,7 @@ For paper-aligned preprocessing methodology, see [Research-Aligned Preprocessing
 - [Configuration](docs/configuration.md) -- job/experiment layout and CLI overrides
 - [Pipeline Stages](docs/pipeline-stages.md) -- recipe stages and optional stages
 - [Datasets](docs/datasets.md) -- YouTube-ASL, How2Sign, and WLASL setup
+- [Contributing](CONTRIBUTING.md) -- required dataset package structure and extension guide
 - [Research-Aligned Preprocessing](docs/research-preprocessing.md) -- paper-aligned preprocessing notes
 
 ## License
