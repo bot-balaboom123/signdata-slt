@@ -6,6 +6,7 @@ Covers:
   - Pipeline processor registration (video2pose / video2crop)
 """
 
+import logging
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -280,6 +281,7 @@ class TestYOLODetectorFP16Policy:
 
     def _make_detector(self, device: str, model=None, *, cuda_available: bool = True):
         from contextlib import ExitStack
+
         cfg = YOLODetectionConfig(model="yolov8n.pt", device=device)
         fake_model = model or _StatefulFakeYOLO()
         with ExitStack() as stack:
@@ -287,8 +289,22 @@ class TestYOLODetectorFP16Policy:
                 patch("signdata.processors.detection.yolo.backend.YOLO", return_value=fake_model)
             )
             if device.startswith("cuda"):
+                _, _, suffix = device.partition(":")
+                requested_index = int(suffix) if suffix else 0
                 stack.enter_context(
                     patch("torch.cuda.is_available", return_value=cuda_available)
+                )
+                stack.enter_context(
+                    patch(
+                        "torch.cuda.device_count",
+                        return_value=(requested_index + 1) if cuda_available else 0,
+                    )
+                )
+                stack.enter_context(
+                    patch(
+                        "torch.cuda.get_device_name",
+                        side_effect=lambda index: f"Fake GPU {index}",
+                    )
                 )
             detector = YOLODetector(cfg)
         return detector, fake_model
@@ -319,6 +335,25 @@ class TestYOLODetectorFP16Policy:
         assert fake_model.calls[0]["requested_half"] is True
         assert fake_model.calls[0]["effective_half"] is True
 
+    def test_cuda_device_is_logged_and_passed_through(self, caplog):
+        fake_model = _StatefulFakeYOLO()
+        cfg = YOLODetectionConfig(model="yolov8n.pt", device="cuda:1")
+
+        with caplog.at_level(logging.INFO):
+            with patch("torch.cuda.is_available", return_value=True):
+                with patch("torch.cuda.device_count", return_value=2):
+                    with patch("torch.cuda.get_device_name", return_value="Fake GPU 1"):
+                        with patch(
+                            "signdata.processors.detection.yolo.backend.YOLO",
+                            return_value=fake_model,
+                        ):
+                            detector = YOLODetector(cfg)
+
+        detector.detect_batch([self._FRAME])
+
+        assert fake_model.calls[0]["device"] == "cuda:1"
+        assert "cuda:1 (GPU 1: Fake GPU 1)" in caplog.text
+
     def test_fp16_failure_resets_predictor_before_fp32_retry(self):
         fake_model = _StatefulFakeYOLO(
             fp16_failures=2,
@@ -344,8 +379,13 @@ class TestYOLODetectorFP16Policy:
         )
         cfg = YOLODetectionConfig(model="yolov8n.pt", device="cuda:0", batch_size=1)
         with patch("torch.cuda.is_available", return_value=True):
-            with patch("signdata.processors.detection.yolo.backend.YOLO", return_value=fake_model):
-                detector = YOLODetector(cfg)
+            with patch("torch.cuda.device_count", return_value=1):
+                with patch("torch.cuda.get_device_name", return_value="Fake GPU 0"):
+                    with patch(
+                        "signdata.processors.detection.yolo.backend.YOLO",
+                        return_value=fake_model,
+                    ):
+                        detector = YOLODetector(cfg)
 
         detector.detect_batch([self._FRAME, self._FRAME])
 
@@ -380,8 +420,13 @@ class TestYOLODetectorFP16Policy:
             batch_size=4,
         )
         with patch("torch.cuda.is_available", return_value=True):
-            with patch("signdata.processors.detection.yolo.backend.YOLO", return_value=fake_model):
-                detector = YOLODetector(cfg)
+            with patch("torch.cuda.device_count", return_value=1):
+                with patch("torch.cuda.get_device_name", return_value="Fake GPU 0"):
+                    with patch(
+                        "signdata.processors.detection.yolo.backend.YOLO",
+                        return_value=fake_model,
+                    ):
+                        detector = YOLODetector(cfg)
 
         with patch("torch.cuda.empty_cache") as empty_cache:
             detections = detector.detect_batch([self._FRAME] * 4)
@@ -389,6 +434,55 @@ class TestYOLODetectorFP16Policy:
         assert len(detections) == 4
         assert [call["batch_size"] for call in fake_model.calls] == [4, 2, 2]
         assert empty_cache.called
+
+    def test_cuda_oom_learns_smaller_effective_batch_size(self, caplog):
+        fake_model = _BatchLimitFakeYOLO(max_batch_size=2)
+        cfg = YOLODetectionConfig(
+            model="yolov8n.pt",
+            device="cuda:0",
+            batch_size=4,
+        )
+        with patch("torch.cuda.is_available", return_value=True):
+            with patch("torch.cuda.device_count", return_value=1):
+                with patch("torch.cuda.get_device_name", return_value="Fake GPU 0"):
+                    with patch(
+                        "signdata.processors.detection.yolo.backend.YOLO",
+                        return_value=fake_model,
+                    ):
+                        detector = YOLODetector(cfg)
+
+        with patch("torch.cuda.empty_cache") as empty_cache:
+            with caplog.at_level(logging.WARNING):
+                detections = detector.detect_batch([self._FRAME] * 8)
+
+        assert len(detections) == 8
+        assert [call["batch_size"] for call in fake_model.calls] == [4, 2, 2, 2, 2]
+        assert detector._effective_batch_size == 2
+        assert empty_cache.called
+        assert "set processing.detection_config.batch_size to 2 or lower" in caplog.text
+
+    def test_terminal_cuda_oom_raises_actionable_message(self):
+        fake_model = _BatchLimitFakeYOLO(max_batch_size=0)
+        cfg = YOLODetectionConfig(
+            model="yolov8n.pt",
+            device="cuda:0",
+            batch_size=1,
+        )
+        with patch("torch.cuda.is_available", return_value=True):
+            with patch("torch.cuda.device_count", return_value=1):
+                with patch("torch.cuda.get_device_name", return_value="Fake GPU 0"):
+                    with patch(
+                        "signdata.processors.detection.yolo.backend.YOLO",
+                        return_value=fake_model,
+                    ):
+                        detector = YOLODetector(cfg)
+
+        with patch("torch.cuda.empty_cache"):
+            with pytest.raises(
+                RuntimeError,
+                match="processing\\.detection_config\\.batch_size=1",
+            ):
+                detector.detect_batch([self._FRAME])
 
 
 class TestMMDetDetectorOOMPolicy:
@@ -412,7 +506,7 @@ class TestMMDetDetectorOOMPolicy:
         cfg = MMDetDetectionConfig(
             det_model_config="model.py",
             det_model_checkpoint="model.pth",
-            device="cuda:0",
+            device="cuda:1",
             batch_size=4,
         )
 
@@ -425,10 +519,15 @@ class TestMMDetDetectorOOMPolicy:
                 "mmpose.utils": fake_mmpose_utils,
             },
         ):
-            detector = MMDetDetector(cfg)
-            with patch("torch.cuda.empty_cache") as empty_cache:
-                detections = detector.detect_batch([self._FRAME] * 4)
+            with patch("torch.cuda.is_available", return_value=True):
+                with patch("torch.cuda.device_count", return_value=2):
+                    with patch("torch.cuda.get_device_name", return_value="Fake GPU 1"):
+                        detector = MMDetDetector(cfg)
+                        with patch("torch.cuda.empty_cache") as empty_cache:
+                            detections = detector.detect_batch([self._FRAME] * 8)
 
-        assert len(detections) == 4
-        assert fake_apis.calls == [4, 2, 2]
+        assert len(detections) == 8
+        assert fake_apis.init_args["device"] == "cuda:1"
+        assert fake_apis.calls == [4, 2, 2, 2, 2]
+        assert detector._effective_batch_size == 2
         assert empty_cache.called

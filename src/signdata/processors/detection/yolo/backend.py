@@ -1,11 +1,19 @@
 """YOLO person detection backend."""
 
 import logging
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 
-from .._cuda_utils import clear_cuda_cache, is_cuda_device, is_cuda_oom_error
+from .._cuda_utils import (
+    clear_cuda_cache,
+    describe_device,
+    format_cuda_oom_message,
+    format_effective_batch_size_message,
+    is_cuda_device,
+    is_cuda_oom_error,
+    validate_cuda_device,
+)
 from ..base import Detection, PersonDetector
 from .resolver import VALID_ALIASES, resolve_yolo_model
 
@@ -36,18 +44,12 @@ class YOLODetector(PersonDetector):
                 "Install with: pip install ultralytics"
             )
 
-        if is_cuda_device(config.device):
-            import torch
-
-            if not torch.cuda.is_available():
-                raise RuntimeError(
-                    f"YOLO device {config.device!r} requested but CUDA is unavailable. "
-                    "Verify your PyTorch CUDA install and GPU visibility, or "
-                    "switch detection_config.device to 'cpu'."
-                )
+        validate_cuda_device(config.device)
 
         self.config = config
+        self.device_label = describe_device(config.device)
         self.use_fp16 = is_cuda_device(config.device)
+        self._effective_batch_size = int(config.batch_size)
 
         resolved_model = resolve_yolo_model(
             config.model,
@@ -85,9 +87,49 @@ class YOLODetector(PersonDetector):
             raise
 
         logger.info(
-            "YOLO detector loaded: %s (resolved: %s) on %s (fp16=%s)",
-            config.model, resolved_model, config.device, self.use_fp16,
+            "YOLO detector loaded: %s (resolved: %s) on %s "
+            "(fp16=%s, configured_batch_size=%d)",
+            config.model,
+            resolved_model,
+            self.device_label,
+            self.use_fp16,
+            self.config.batch_size,
         )
+
+    def _remember_safe_batch_size(self, safe_batch_size: int) -> None:
+        if safe_batch_size <= 0:
+            return
+
+        previous_batch_size = self._effective_batch_size
+        new_batch_size = min(previous_batch_size, safe_batch_size)
+        if new_batch_size >= previous_batch_size:
+            return
+
+        self._effective_batch_size = new_batch_size
+        logger.warning(
+            format_effective_batch_size_message(
+                backend="YOLO",
+                device=self.config.device,
+                previous_batch_size=previous_batch_size,
+                new_batch_size=new_batch_size,
+            )
+        )
+
+    def _raise_terminal_oom(self, attempted_batch_size: int, exc: BaseException) -> None:
+        learned_batch_size = None
+        if self._effective_batch_size < self.config.batch_size:
+            learned_batch_size = self._effective_batch_size
+
+        raise RuntimeError(
+            format_cuda_oom_message(
+                backend="YOLO",
+                device=self.config.device,
+                configured_batch_size=self.config.batch_size,
+                attempted_batch_size=attempted_batch_size,
+                model=self.config.model,
+                learned_batch_size=learned_batch_size,
+            )
+        ) from exc
 
     def _reset_predictor(self) -> None:
         # Ultralytics reuses the existing predictor as long as the device stays
@@ -136,9 +178,12 @@ class YOLODetector(PersonDetector):
 
         return self._predict_chunk(chunk, half=False)
 
-    def _predict_chunk_adaptive(self, chunk: List[np.ndarray]):
+    def _predict_chunk_adaptive(
+        self,
+        chunk: List[np.ndarray],
+    ) -> Tuple[List, int]:
         try:
-            return list(self._predict_with_precision_fallback(chunk))
+            return list(self._predict_with_precision_fallback(chunk)), len(chunk)
         except Exception as exc:
             if not is_cuda_oom_error(exc):
                 raise
@@ -155,8 +200,14 @@ class YOLODetector(PersonDetector):
                     self.use_fp16 = False
                     self._reset_predictor()
                     clear_cuda_cache(self.config.device)
-                    return list(self._predict_chunk(chunk, half=False))
-                raise
+                    try:
+                        return list(self._predict_chunk(chunk, half=False)), 1
+                    except Exception as retry_exc:
+                        if is_cuda_oom_error(retry_exc):
+                            clear_cuda_cache(self.config.device)
+                            self._raise_terminal_oom(1, retry_exc)
+                        raise
+                self._raise_terminal_oom(1, exc)
 
             clear_cuda_cache(self.config.device)
             mid = max(1, len(chunk) // 2)
@@ -164,21 +215,24 @@ class YOLODetector(PersonDetector):
                 "YOLO inference OOM for batch size %d; retrying as %d + %d",
                 len(chunk), mid, len(chunk) - mid,
             )
-            return (
-                self._predict_chunk_adaptive(chunk[:mid])
-                + self._predict_chunk_adaptive(chunk[mid:])
-            )
+            left_results, left_safe = self._predict_chunk_adaptive(chunk[:mid])
+            right_results, right_safe = self._predict_chunk_adaptive(chunk[mid:])
+            safe_batch_size = max(left_safe, right_safe)
+            self._remember_safe_batch_size(safe_batch_size)
+            return left_results + right_results, safe_batch_size
 
     def detect_batch(self, frames: List[np.ndarray]) -> List[List[Detection]]:
         if not frames:
             return []
 
-        batch_size = self.config.batch_size
         all_detections: List[List[Detection]] = []
+        start = 0
 
-        for start in range(0, len(frames), batch_size):
+        while start < len(frames):
+            batch_size = max(1, self._effective_batch_size)
             chunk = frames[start : start + batch_size]
-            results = self._predict_chunk_adaptive(chunk)
+            chunk_len = len(chunk)
+            results, _ = self._predict_chunk_adaptive(chunk)
 
             for i, result in enumerate(results):
                 h, w = chunk[i].shape[:2]
@@ -214,6 +268,7 @@ class YOLODetector(PersonDetector):
                 all_detections.append(frame_dets)
 
             del results
+            start += chunk_len
 
         return all_detections
 
