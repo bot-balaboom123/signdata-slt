@@ -28,7 +28,7 @@ def build(config, source: WLASLSourceConfig, log: logging.Logger) -> pd.DataFram
     with open(metadata_json, "r", encoding="utf-8") as f:
         entries = json.load(f)
 
-    records = _flatten_instances(entries, video_dir)
+    records = _flatten_instances(entries, video_dir, source)
 
     if not records:
         raise RuntimeError(
@@ -57,8 +57,11 @@ def build(config, source: WLASLSourceConfig, log: logging.Logger) -> pd.DataFram
 def _flatten_instances(
     entries: List[Dict],
     video_dir: Optional[str],
+    source: WLASLSourceConfig,
 ) -> List[Dict]:
     records = []
+    use_preprocessed_timing = source.download_mode == "validate"
+
     for gloss_idx, entry in enumerate(entries):
         gloss = entry.get("gloss", "")
         instances = entry.get("instances", [])
@@ -78,6 +81,7 @@ def _flatten_instances(
                 frame_start=frame_start,
                 frame_end=frame_end,
                 video_dir=video_dir,
+                use_preprocessed_timing=use_preprocessed_timing,
             )
 
             records.append({
@@ -125,20 +129,75 @@ def _resolve_timing(
     frame_start: Any,
     frame_end: Any,
     video_dir: Optional[str],
+    use_preprocessed_timing: bool,
 ) -> tuple:
-    if frame_start is not None and frame_end is not None and fps > 0:
-        try:
-            start = float(frame_start)
-            end = float(frame_end)
-            if start >= 0 and end > start:
-                return start / fps, end / fps
-        except (TypeError, ValueError):
-            pass
+    clip_duration = _get_clip_duration(video_id, video_dir)
+    if use_preprocessed_timing:
+        if clip_duration > 0:
+            return 0.0, clip_duration
 
-    start = 0.0
-    end = 0.0
-    if video_id and video_dir:
-        video_path = os.path.join(video_dir, f"{video_id}.mp4")
-        if os.path.exists(video_path):
-            end = get_video_duration(video_path)
-    return start, end
+        clip_duration = _estimate_clip_duration(frame_start, frame_end, fps)
+        if clip_duration is not None:
+            return 0.0, clip_duration
+
+        return 0.0, 0.0
+
+    source_timing = _estimate_source_timing(frame_start, frame_end, fps)
+    if source_timing is not None:
+        return source_timing
+
+    if clip_duration > 0:
+        return 0.0, clip_duration
+
+    return 0.0, 0.0
+
+
+def _estimate_source_timing(
+    frame_start: Any,
+    frame_end: Any,
+    fps: float,
+) -> Optional[tuple[float, float]]:
+    if frame_start is None or frame_end is None or fps <= 0:
+        return None
+
+    try:
+        start = float(frame_start)
+        end = float(frame_end)
+    except (TypeError, ValueError):
+        return None
+
+    if start < 0 or end <= start:
+        return None
+
+    return start / fps, end / fps
+
+
+def _estimate_clip_duration(
+    frame_start: Any,
+    frame_end: Any,
+    fps: float,
+) -> Optional[float]:
+    if frame_start is None or frame_end is None or fps <= 0:
+        return None
+
+    try:
+        start = float(frame_start)
+        end = float(frame_end)
+    except (TypeError, ValueError):
+        return None
+
+    if start < 0 or end <= start:
+        return None
+
+    return (end - start) / fps
+
+
+def _get_clip_duration(video_id: str, video_dir: Optional[str]) -> float:
+    if not video_id or not video_dir:
+        return 0.0
+
+    video_path = os.path.join(video_dir, f"{video_id}.mp4")
+    if os.path.exists(video_path):
+        return get_video_duration(video_path)
+
+    return 0.0

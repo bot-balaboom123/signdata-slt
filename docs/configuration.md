@@ -127,7 +127,7 @@ If omitted, the loader derives these defaults from `paths.root`:
 | `metadata_json` | `str` | `""` | Canonical WLASL metadata JSON path (`annotation_json` is accepted as a compatibility alias) |
 | `languages` | `list[str]` | adapter defaults | Transcript language codes |
 | `availability_policy` | `str` | `"drop_unavailable"` | Availability handling policy for datasets that may have missing clips |
-| `download_mode` | `str` | adapter defaults | Dataset acquisition mode such as `validate` or `download_missing` |
+| `download_mode` | `str` | adapter defaults | Dataset acquisition mode such as `validate` or `download_missing`; WLASL uses `validate` for local preprocessed clips and `download_missing` for raw-source URL fetches |
 | `download_format` | `str` | `"worstvideo[...]+worstaudio/.../best"` | yt-dlp format selector |
 | `rate_limit` | `str` | `"5M"` | Download rate limit |
 | `concurrent_fragments` | `int` | `5` | Parallel download fragments |

@@ -70,8 +70,10 @@ python -m signdata run configs/jobs/wlasl/video.yaml
 3. Place one preprocessed clip per `video_id` under `paths.videos` (default: `dataset/wlasl/videos/`)
 4. The provided base config keeps `dataset.source.download_mode: validate` for local preprocessed clips; optionally tune `dataset.source.split`, `dataset.source.subset`, and `dataset.source.availability_policy`
 
-The WLASL dataset adapter uses `dataset.download` as a validation step for
-local annotation and video files; it does not fetch remote data.
+The WLASL dataset adapter supports two acquisition modes:
+
+- `download_mode: validate` treats files under `paths.videos` as preprocessed clips. Manifest rows keep the original `FRAME_START` / `FRAME_END` metadata, but `START=0.0` and `END` is taken from the isolated clip duration when available.
+- `download_mode: download_missing` fetches missing raw source videos from each instance `url` in `WLASL_v0.3.json` and keeps source-aligned `START` / `END` timing in the manifest.
 
 ## Adding a New Dataset
 

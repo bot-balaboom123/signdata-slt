@@ -8,6 +8,7 @@ import pytest
 from signdata.config.schema import Config
 from signdata.datasets.wlasl import WLASLDataset, WLASLSourceConfig
 from signdata.datasets.wlasl import manifest as wlasl_manifest
+from signdata.datasets.wlasl import source as wlasl_source
 from signdata.pipeline.context import PipelineContext
 from signdata.registry import DATASET_REGISTRY
 
@@ -16,19 +17,24 @@ def _write_metadata(path, payload) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def _make_config(metadata_path, video_dir, manifest_path, source=None):
+def _make_config(metadata_path, video_dir, manifest_path, source=None, root_dir=None):
     dataset_source = {"metadata_json": str(metadata_path)}
     if source:
         dataset_source.update(source)
+
+    paths = {
+        "videos": str(video_dir),
+        "manifest": str(manifest_path),
+    }
+    if root_dir is not None:
+        paths["root"] = str(root_dir)
+
     return Config(
         dataset={
             "name": "wlasl",
             "source": dataset_source,
         },
-        paths={
-            "videos": str(video_dir),
-            "manifest": str(manifest_path),
-        },
+        paths=paths,
     )
 
 
@@ -185,6 +191,64 @@ class TestWLASLDownload:
         with pytest.raises(ValueError, match="Unknown download_mode"):
             adapter.download(cfg, context)
 
+    def test_download_missing_uses_instance_urls(self, tmp_path, monkeypatch):
+        metadata_path = tmp_path / "WLASL_v0.3.json"
+        _write_metadata(metadata_path, [
+            {
+                "gloss": "book",
+                "instances": [
+                    {
+                        "video_id": "00001",
+                        "url": "https://example.com/book.mp4",
+                    },
+                    {
+                        "video_id": "00002",
+                        "url": "https://example.com/drink.mp4",
+                    },
+                ],
+            },
+        ])
+
+        video_dir = tmp_path / "videos"
+        video_dir.mkdir()
+        (video_dir / "00001.mp4").touch()
+        manifest_path = tmp_path / "manifest.tsv"
+        root_dir = tmp_path / "root"
+        root_dir.mkdir()
+
+        captured = {}
+
+        def fake_download_video_urls(video_urls, video_dir_arg, **kwargs):
+            captured["video_urls"] = video_urls
+            captured["video_dir"] = video_dir_arg
+            captured["kwargs"] = kwargs
+            return {"downloaded": 1, "errors": 0, "missing": []}
+
+        monkeypatch.setattr(wlasl_source, "download_video_urls", fake_download_video_urls)
+
+        cfg = _make_config(
+            metadata_path,
+            video_dir,
+            manifest_path,
+            source={"download_mode": "download_missing"},
+            root_dir=root_dir,
+        )
+
+        adapter = WLASLDataset()
+        context = PipelineContext(config=cfg, dataset=adapter)
+        context = adapter.download(cfg, context)
+
+        assert captured["video_urls"] == {
+            "00002": "https://example.com/drink.mp4",
+        }
+        assert captured["video_dir"] == str(video_dir)
+        assert context.stats["dataset.download"] == {
+            "total": 2,
+            "downloaded": 1,
+            "errors": 0,
+            "skipped": 1,
+        }
+
 
 class TestWLASLBuildManifest:
     def _make_context(self, config):
@@ -263,8 +327,8 @@ class TestWLASLBuildManifest:
         assert list(context.manifest_df["GLOSS"]) == ["book", "drink"]
         assert list(context.manifest_df["CLASS_ID"]) == [0, 1]
         assert list(context.manifest_df["SPLIT"]) == ["train", "train"]
-        assert list(context.manifest_df["START"]) == [0.0, 0.4]
-        assert list(context.manifest_df["END"]) == [2.0, 1.4]
+        assert list(context.manifest_df["START"]) == [0.0, 0.0]
+        assert list(context.manifest_df["END"]) == [2.0, 1.0]
         assert list(context.manifest_df["VARIATION_ID"]) == [0, 2]
         assert list(context.manifest_df["SOURCE"]) == ["aslbrick", "signschool"]
         assert list(context.manifest_df["FRAME_START"]) == [0, 10]
@@ -398,3 +462,37 @@ class TestWLASLBuildManifest:
 
         assert context.manifest_df.iloc[0]["START"] == 0.0
         assert context.manifest_df.iloc[0]["END"] == 3.6
+
+    def test_build_manifest_download_missing_uses_source_timing(self, tmp_path):
+        metadata_path = tmp_path / "WLASL_v0.3.json"
+        _write_metadata(metadata_path, [
+            {
+                "gloss": "drink",
+                "instances": [
+                    {
+                        "video_id": "00003",
+                        "split": "train",
+                        "fps": 25,
+                        "frame_start": 10,
+                        "frame_end": 35,
+                    },
+                ],
+            },
+        ])
+
+        video_dir = tmp_path / "videos"
+        video_dir.mkdir()
+        (video_dir / "00003.mp4").touch()
+        manifest_path = tmp_path / "manifest.tsv"
+        cfg = _make_config(
+            metadata_path,
+            video_dir,
+            manifest_path,
+            source={"download_mode": "download_missing"},
+        )
+
+        context = self._make_context(cfg)
+        context = WLASLDataset().build_manifest(cfg, context)
+
+        assert context.manifest_df.iloc[0]["START"] == 0.4
+        assert context.manifest_df.iloc[0]["END"] == 1.4
