@@ -50,7 +50,12 @@ local files; it does not fetch remote data.
 
 ## Adding a New Dataset
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md#adding-a-new-dataset) for step-by-step instructions and code examples.
+All datasets must use the package layout
+`src/signdata/datasets/<dataset_name>/` with `adapter.py`, `source.py`, and
+`manifest.py` as the default entry files.
+
+See [CONTRIBUTING.md](../CONTRIBUTING.md#adding-a-new-dataset) for the
+required structure, responsibilities, and code template.
 
 ---
 

@@ -82,7 +82,8 @@ reads and writes through `PipelineContext` instead of hardcoding artifact paths.
 
 - `src/signdata/config/` contains Pydantic config schemas (`schema.py`), YAML loading and path resolution (`loader.py`), and experiment config parsing (`experiment.py`).
 - `src/signdata/pipeline/` contains the pipeline runner (`runner.py`), shared pipeline context (`context.py`), stage checkpoint/success markers (`checkpoint.py`), and the experiment runner (`experiment.py`).
-- `src/signdata/datasets/` contains dataset adapters.
+- `src/signdata/datasets/` contains dataset adapter packages.
+- `src/signdata/datasets/_ingestion/` contains dataset-ingestion helpers used only during `dataset.download` and `dataset.manifest`. Must NOT be imported by processors, pipeline runner, or output modules — use `signdata.utils` for those.
 - `src/signdata/processors/detection/` contains detector backends and bbox utilities.
 - `src/signdata/processors/pose/` contains pose estimators and presets.
 - `src/signdata/processors/sampler/` contains frame sampling utilities for `video2pose`.
@@ -90,8 +91,45 @@ reads and writes through `PipelineContext` instead of hardcoding artifact paths.
 - `src/signdata/processors/` contains top-level processors such as `video2pose` and `video2crop`.
 - `src/signdata/post_processors/` contains post-processing recipes such as `normalize`.
 - `src/signdata/output/` contains output writers such as `webdataset`.
-- `src/signdata/utils/` contains shared helpers for video I/O, file discovery, text normalization, manifest reading/validation, and video availability filtering.
+- `src/signdata/utils/` contains pipeline-wide helpers for video I/O, file discovery, manifest reading/validation, and other generic logic.
 - `resources/` contains shipped model config assets.
+
+## Contributor Boundary Rule
+
+When adding new shared code, use this table to decide where it goes:
+
+| Directory | Purpose | Consumers |
+|---|---|---|
+| `datasets/_ingestion/` | Acquire raw external data, build canonical manifests | Dataset adapter `source.py` and `manifest.py` only |
+| `utils/` | Operate on already-built manifests or video files during processing | Processors, pipeline runner, output modules |
+
+**Rule of thumb:** if the code runs once when setting up a dataset → `_ingestion/`. If it runs per-sample during the processing pipeline → `utils/`.
+
+## Dataset Adapter Structure
+
+All datasets must be packages now. The default structure is:
+
+```text
+src/signdata/datasets/
+├── _ingestion/
+│   ├── availability.py
+│   ├── classmap.py
+│   ├── media.py
+│   ├── text.py
+│   └── youtube.py
+└── <dataset_name>/
+    ├── __init__.py
+    ├── adapter.py
+    ├── source.py
+    └── manifest.py
+```
+
+- `adapter.py` registers the dataset and keeps stage methods thin.
+- `source.py` owns `SourceConfig`, path resolution, validation, download, and preparation/materialization.
+- `manifest.py` owns source parsing and canonical manifest construction.
+
+Add more files only when the dataset is large enough to justify them. Typical
+extensions are `schema.py`, `constants.py`, `parsing.py`, or `splits.py`.
 
 ## See Also
 

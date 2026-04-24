@@ -1,13 +1,16 @@
-"""Shared utilities."""
+"""Pipeline utilities shared across processors, output, and runner.
+
+Dataset-ingestion helpers (download, class maps, text normalization,
+availability enforcement) live in ``signdata.datasets._ingestion``.
+"""
 
 from .video import (
     FPSSampler,
     validate_video_file,
-    get_video_fps,
     resolve_effective_sample_fps,
+    get_video_filenames,
+    get_filenames,
 )
-from .files import get_video_filenames, get_filenames
-from .text import normalize_text
 from .manifest import (
     read_manifest,
     validate_manifest,
@@ -23,21 +26,16 @@ from .manifest import (
     ALL_KNOWN_COLUMNS,
 )
 from .availability import (
-    get_existing_video_ids,
-    apply_availability_policy,
     filter_available,
-    write_acquire_report,
     AvailabilityPolicy,
 )
 
 __all__ = [
     "FPSSampler",
     "validate_video_file",
-    "get_video_fps",
     "resolve_effective_sample_fps",
     "get_video_filenames",
     "get_filenames",
-    "normalize_text",
     "read_manifest",
     "validate_manifest",
     "has_timing",
@@ -50,9 +48,6 @@ __all__ = [
     "SPATIAL_COLUMNS",
     "METADATA_COLUMNS",
     "ALL_KNOWN_COLUMNS",
-    "get_existing_video_ids",
-    "apply_availability_policy",
     "filter_available",
-    "write_acquire_report",
     "AvailabilityPolicy",
 ]

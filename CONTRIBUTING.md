@@ -40,27 +40,96 @@ signdata/
 
 ## Adding a New Dataset
 
-1. Create a class in `src/signdata/datasets/` decorated with `@register_dataset`:
+All datasets must be packages now. Do not add new flat modules like
+`src/signdata/datasets/my_dataset.py`.
+
+Use this default layout:
+
+```text
+src/signdata/datasets/
+├── _shared/                  # Dataset-ingestion helpers only
+│   ├── availability.py
+│   ├── classmap.py
+│   ├── media.py
+│   ├── paths.py
+│   └── youtube.py
+└── my_dataset/
+    ├── __init__.py
+    ├── adapter.py
+    ├── source.py
+    └── manifest.py
+```
+
+### File Responsibilities
+
+- `adapter.py`
+  - Public dataset entrypoint only.
+  - Contains `@register_dataset("my_dataset")` and the adapter class.
+  - Keeps `download()` and `build_manifest()` thin by delegating to `source.py` and `manifest.py`.
+- `source.py`
+  - Owns `SourceConfig`, source path resolution, release discovery, validation, download, and preparation/materialization.
+- `manifest.py`
+  - Owns source metadata parsing and canonical manifest construction.
+  - Handles split assignment, class-map joins, timing/bbox conversion, and TSV writing.
+
+Add more files only when needed:
+
+- `schema.py` for multiple typed row/config models
+- `constants.py` for larger aliases or bundled filename tables
+- `parsing.py` or `splits.py` when `manifest.py` becomes too dense
+
+### Shared Helper Rule
+
+- If a helper is used only by dataset ingestion or manifest building, put it in `src/signdata/datasets/_shared/`.
+- If a helper is generic to the pipeline, processors, or outputs, keep it in `src/signdata/utils/`.
+
+### Minimal Template
+
+`src/signdata/datasets/my_dataset/__init__.py`
 
 ```python
-from signdata.datasets.base import BaseDataset
+from .adapter import MyDataset
+```
+
+`src/signdata/datasets/my_dataset/adapter.py`
+
+```python
+from pathlib import Path
+
+from signdata.datasets.base import DatasetAdapter
 from signdata.registry import register_dataset
+from . import manifest as _manifest
+from . import source as _source
 
 
 @register_dataset("my_dataset")
-class MyDataset(BaseDataset):
+class MyDataset(DatasetAdapter):
     name = "my_dataset"
 
     @classmethod
-    def validate_config(cls, config):
+    def validate_config(cls, config) -> None:
         pass
+
+    def download(self, config, context):
+        source = _source.get_source_config(config)
+        context.stats["dataset.download"] = _source.validate(source, config, self.logger)
+        return context
+
+    def build_manifest(self, config, context):
+        source = _source.get_source_config(config)
+        df = _manifest.build(config, source, self.logger)
+        context.manifest_path = Path(config.paths.manifest)
+        context.manifest_df = df
+        return context
 ```
 
-2. Import it in `src/signdata/datasets/__init__.py` so the decorator runs at startup.
+### Integration Steps
 
-3. Add a job YAML under `configs/jobs/my_dataset/`, for example `configs/jobs/my_dataset/mediapipe.yaml`. See [configuration reference](docs/configuration.md#minimal-working-config).
-
-4. Add dataset documentation to `docs/datasets.md`.
+1. Create `src/signdata/datasets/my_dataset/` using the package layout above.
+2. Export the adapter in `src/signdata/datasets/my_dataset/__init__.py`.
+3. Re-export it from `src/signdata/datasets/__init__.py`.
+4. Add a job YAML under `configs/jobs/my_dataset/`, for example `configs/jobs/my_dataset/mediapipe.yaml`. See [configuration reference](docs/configuration.md#minimal-working-config).
+5. Add dataset documentation to `docs/datasets.md`.
 
 ## Adding a New Processor
 
