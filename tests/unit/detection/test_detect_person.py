@@ -15,6 +15,7 @@ from unittest.mock import patch
 import numpy as np
 
 import pytest
+import torch
 
 PROJECT_ROOT = next(
     path for path in Path(__file__).resolve().parents if (path / "src").is_dir()
@@ -183,6 +184,7 @@ class _StatefulFakeYOLO:
         fp32_failures: int = 0,
         fp16_error: str = "fp16 not supported on this device",
         fp32_error: str = "fp32 fallback failed",
+        runtime_device=None,
     ):
         self.predictor = None
         self.calls = []
@@ -191,14 +193,18 @@ class _StatefulFakeYOLO:
         self._fp32_failures = fp32_failures
         self._fp16_error = fp16_error
         self._fp32_error = fp32_error
+        self._runtime_device = runtime_device
 
     def predict(self, *, source, device, verbose, half):
         # Ultralytics reuses the predictor when device is unchanged, so the
         # effective precision comes from the existing predictor, not the new
         # half= kwarg, unless caller resets predictor first.
+        predictor_device = self._runtime_device or device
         if self.predictor is None:
             self.predictor_builds += 1
-            self.predictor = SimpleNamespace(fp16=half)
+            self.predictor = SimpleNamespace(fp16=half, device=predictor_device)
+        else:
+            self.predictor.device = predictor_device
 
         effective_half = self.predictor.fp16
         self.calls.append({
@@ -227,6 +233,7 @@ class _BatchLimitFakeYOLO:
         self.calls = []
 
     def predict(self, *, source, device, verbose, half):
+        self.predictor = SimpleNamespace(device=device)
         self.calls.append({
             "batch_size": len(source),
             "device": device,
@@ -348,11 +355,34 @@ class TestYOLODetectorFP16Policy:
                             return_value=fake_model,
                         ):
                             detector = YOLODetector(cfg)
+                            detector.detect_batch([self._FRAME])
+
+        assert fake_model.calls[0]["device"] == torch.device("cuda:1")
+        assert "cuda:1 (GPU 1: Fake GPU 1)" in caplog.text
+        assert "YOLO runtime device verified" in caplog.text
+
+    def test_plain_cuda_device_verifies_as_cuda_zero(self):
+        detector, fake_model = self._make_detector("cuda")
 
         detector.detect_batch([self._FRAME])
 
-        assert fake_model.calls[0]["device"] == "cuda:1"
-        assert "cuda:1 (GPU 1: Fake GPU 1)" in caplog.text
+        assert fake_model.calls[0]["device"] == torch.device("cuda")
+
+    def test_cuda_runtime_device_mismatch_raises_clear_error(self):
+        fake_model = _StatefulFakeYOLO(runtime_device=torch.device("cuda:0"))
+        cfg = YOLODetectionConfig(model="yolov8n.pt", device="cuda:1")
+
+        with patch("torch.cuda.is_available", return_value=True):
+            with patch("torch.cuda.device_count", return_value=2):
+                with patch("torch.cuda.get_device_name", side_effect=lambda index: f"Fake GPU {index}"):
+                    with patch(
+                        "signdata.processors.detection.yolo.backend.YOLO",
+                        return_value=fake_model,
+                    ):
+                        detector = YOLODetector(cfg)
+
+        with pytest.raises(RuntimeError, match="YOLO runtime device mismatch"):
+            detector.detect_batch([self._FRAME])
 
     def test_fp16_failure_resets_predictor_before_fp32_retry(self):
         fake_model = _StatefulFakeYOLO(
@@ -461,6 +491,47 @@ class TestYOLODetectorFP16Policy:
         assert empty_cache.called
         assert "set processing.detection_config.batch_size to 2 or lower" in caplog.text
 
+    def test_deep_cuda_oom_reports_one_warning_for_each_new_lower_bound(self, caplog):
+        fake_model = _BatchLimitFakeYOLO(max_batch_size=8)
+        cfg = YOLODetectionConfig(
+            model="yolov8n.pt",
+            device="cuda:0",
+            batch_size=64,
+        )
+        with patch("torch.cuda.is_available", return_value=True):
+            with patch("torch.cuda.device_count", return_value=1):
+                with patch("torch.cuda.get_device_name", return_value="Fake GPU 0"):
+                    with patch(
+                        "signdata.processors.detection.yolo.backend.YOLO",
+                        return_value=fake_model,
+                    ):
+                        detector = YOLODetector(cfg)
+
+        with patch("torch.cuda.is_available", return_value=True):
+            with patch("torch.cuda.device_count", return_value=1):
+                with patch("torch.cuda.get_device_name", return_value="Fake GPU 0"):
+                    with patch("torch.cuda.empty_cache"):
+                        with caplog.at_level(logging.WARNING):
+                            detector.detect_batch([self._FRAME] * 64)
+                            detector.detect_batch([self._FRAME] * 16)
+
+        lowered_messages = [
+            record.message for record in caplog.records
+            if "lowered the effective batch size" in record.message
+        ]
+        retry_messages = [
+            record.message for record in caplog.records
+            if "retrying as" in record.message
+        ]
+        assert detector._effective_batch_size == 8
+        assert lowered_messages == [
+            "YOLO lowered the effective batch size for this run from 64 to 8 "
+            "on cuda:0 (GPU 0: Fake GPU 0) after CUDA out of memory. To reduce "
+            "VRAM usage and avoid repeated retries, set "
+            "processing.detection_config.batch_size to 8 or lower."
+        ]
+        assert retry_messages == []
+
     def test_terminal_cuda_oom_raises_actionable_message(self):
         fake_model = _BatchLimitFakeYOLO(max_batch_size=0)
         cfg = YOLODetectionConfig(
@@ -531,3 +602,60 @@ class TestMMDetDetectorOOMPolicy:
         assert fake_apis.calls == [4, 2, 2, 2, 2]
         assert detector._effective_batch_size == 2
         assert empty_cache.called
+
+    def test_deep_cuda_oom_reports_one_warning_for_each_new_lower_bound(self, caplog):
+        fake_apis = _BatchLimitFakeMMDetApis(max_batch_size=8)
+        fake_mmdet = ModuleType("mmdet")
+        fake_mmdet.__path__ = []
+        fake_mmdet_apis = ModuleType("mmdet.apis")
+        fake_mmdet_apis.init_detector = fake_apis.init_detector
+        fake_mmdet_apis.inference_detector = fake_apis.inference_detector
+        fake_mmdet.apis = fake_mmdet_apis
+
+        fake_mmpose = ModuleType("mmpose")
+        fake_mmpose.__path__ = []
+        fake_mmpose_utils = ModuleType("mmpose.utils")
+        fake_mmpose_utils.adapt_mmdet_pipeline = lambda cfg: cfg
+        fake_mmpose.utils = fake_mmpose_utils
+
+        cfg = MMDetDetectionConfig(
+            det_model_config="model.py",
+            det_model_checkpoint="model.pth",
+            device="cuda:1",
+            batch_size=64,
+        )
+
+        with patch.dict(
+            sys.modules,
+            {
+                "mmdet": fake_mmdet,
+                "mmdet.apis": fake_mmdet_apis,
+                "mmpose": fake_mmpose,
+                "mmpose.utils": fake_mmpose_utils,
+            },
+        ):
+            with patch("torch.cuda.is_available", return_value=True):
+                with patch("torch.cuda.device_count", return_value=2):
+                    with patch("torch.cuda.get_device_name", return_value="Fake GPU 1"):
+                        detector = MMDetDetector(cfg)
+                        with patch("torch.cuda.empty_cache"):
+                            with caplog.at_level(logging.WARNING):
+                                detector.detect_batch([self._FRAME] * 64)
+                                detector.detect_batch([self._FRAME] * 16)
+
+        lowered_messages = [
+            record.message for record in caplog.records
+            if "lowered the effective batch size" in record.message
+        ]
+        retry_messages = [
+            record.message for record in caplog.records
+            if "retrying as" in record.message
+        ]
+        assert detector._effective_batch_size == 8
+        assert lowered_messages == [
+            "MMDet lowered the effective batch size for this run from 64 to 8 "
+            "on cuda:1 (GPU 1: Fake GPU 1) after CUDA out of memory. To reduce "
+            "VRAM usage and avoid repeated retries, set "
+            "processing.detection_config.batch_size to 8 or lower."
+        ]
+        assert retry_messages == []

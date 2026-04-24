@@ -47,9 +47,19 @@ class YOLODetector(PersonDetector):
         validate_cuda_device(config.device)
 
         self.config = config
+        import torch
+
+        self._predict_device = torch.device(config.device)
+        if self._predict_device.type == "cuda":
+            predict_index = 0 if self._predict_device.index is None else self._predict_device.index
+            self._expected_runtime_device = f"cuda:{predict_index}"
+        else:
+            self._expected_runtime_device = str(self._predict_device)
         self.device_label = describe_device(config.device)
         self.use_fp16 = is_cuda_device(config.device)
         self._effective_batch_size = int(config.batch_size)
+        self._reported_effective_batch_size = self._effective_batch_size
+        self._runtime_device_verified = False
 
         resolved_model = resolve_yolo_model(
             config.model,
@@ -106,14 +116,32 @@ class YOLODetector(PersonDetector):
             return
 
         self._effective_batch_size = new_batch_size
+
+    def _report_effective_batch_size_if_needed(self) -> None:
+        current_batch_size = self._effective_batch_size
+        previous_batch_size = self._reported_effective_batch_size
+        if current_batch_size >= previous_batch_size:
+            return
+
+        self._reported_effective_batch_size = current_batch_size
         logger.warning(
             format_effective_batch_size_message(
                 backend="YOLO",
                 device=self.config.device,
                 previous_batch_size=previous_batch_size,
-                new_batch_size=new_batch_size,
+                new_batch_size=current_batch_size,
             )
         )
+
+    def _record_oom_ceiling(self, oom_batch_size: int) -> None:
+        """Cap effective batch size after an OOM at ``oom_batch_size``.
+
+        Called eagerly so the learned ceiling persists across videos even
+        if the recursive retry ultimately raises a terminal OOM.
+        """
+        if oom_batch_size <= 1:
+            return
+        self._remember_safe_batch_size(max(1, oom_batch_size // 2))
 
     def _raise_terminal_oom(self, attempted_batch_size: int, exc: BaseException) -> None:
         learned_batch_size = None
@@ -137,14 +165,59 @@ class YOLODetector(PersonDetector):
         # we pass half=False on a later call. Null it out to force a rebuild.
         if hasattr(self.model, "predictor"):
             self.model.predictor = None
+        self._runtime_device_verified = False
+
+    @staticmethod
+    def _canonical_device_text(device) -> str:
+        text = str(device)
+        if text == "cuda":
+            return "cuda:0"
+        return text
+
+    def _verify_runtime_device(self) -> None:
+        if self._runtime_device_verified:
+            return
+
+        predictor = getattr(self.model, "predictor", None)
+        if predictor is None:
+            return
+
+        runtime_device = getattr(predictor, "device", None)
+        if runtime_device is None:
+            logger.debug("YOLO predictor device is unavailable for verification.")
+            return
+
+        expected_device = self._expected_runtime_device
+        actual_device = self._canonical_device_text(runtime_device)
+        backend_device = getattr(getattr(predictor, "model", None), "device", None)
+        backend_suffix = ""
+        if backend_device is not None:
+            backend_suffix = f"; backend={describe_device(str(backend_device))}"
+
+        if actual_device != expected_device:
+            raise RuntimeError(
+                "YOLO runtime device mismatch: configured "
+                f"{describe_device(expected_device)} but Ultralytics predictor "
+                f"initialized on {describe_device(actual_device)}{backend_suffix}."
+            )
+
+        logger.info(
+            "YOLO runtime device verified: configured=%s predictor=%s%s",
+            describe_device(expected_device),
+            describe_device(actual_device),
+            backend_suffix,
+        )
+        self._runtime_device_verified = True
 
     def _predict_chunk(self, chunk: List[np.ndarray], *, half: bool):
-        return self.model.predict(
+        results = self.model.predict(
             source=chunk,
-            device=self.config.device,
+            device=self._predict_device,
             verbose=False,
             half=half,
         )
+        self._verify_runtime_device()
+        return results
 
     def _predict_with_precision_fallback(self, chunk: List[np.ndarray]):
         if self.use_fp16:
@@ -210,8 +283,9 @@ class YOLODetector(PersonDetector):
                 self._raise_terminal_oom(1, exc)
 
             clear_cuda_cache(self.config.device)
+            self._record_oom_ceiling(len(chunk))
             mid = max(1, len(chunk) // 2)
-            logger.warning(
+            logger.debug(
                 "YOLO inference OOM for batch size %d; retrying as %d + %d",
                 len(chunk), mid, len(chunk) - mid,
             )
@@ -233,6 +307,7 @@ class YOLODetector(PersonDetector):
             chunk = frames[start : start + batch_size]
             chunk_len = len(chunk)
             results, _ = self._predict_chunk_adaptive(chunk)
+            self._report_effective_batch_size_if_needed()
 
             for i, result in enumerate(results):
                 h, w = chunk[i].shape[:2]

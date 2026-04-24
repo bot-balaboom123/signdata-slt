@@ -37,6 +37,7 @@ class MMDetDetector(PersonDetector):
         self.config = config
         self.device_label = describe_device(config.device)
         self._effective_batch_size = int(config.batch_size)
+        self._reported_effective_batch_size = self._effective_batch_size
         self.detector = init_detector(
             config.det_model_config,
             config.det_model_checkpoint,
@@ -61,14 +62,28 @@ class MMDetDetector(PersonDetector):
             return
 
         self._effective_batch_size = new_batch_size
+
+    def _report_effective_batch_size_if_needed(self) -> None:
+        current_batch_size = self._effective_batch_size
+        previous_batch_size = self._reported_effective_batch_size
+        if current_batch_size >= previous_batch_size:
+            return
+
+        self._reported_effective_batch_size = current_batch_size
         logger.warning(
             format_effective_batch_size_message(
                 backend="MMDet",
                 device=self.config.device,
                 previous_batch_size=previous_batch_size,
-                new_batch_size=new_batch_size,
+                new_batch_size=current_batch_size,
             )
         )
+
+    def _record_oom_ceiling(self, oom_batch_size: int) -> None:
+        """Cap effective batch size after an OOM so it persists across videos."""
+        if oom_batch_size <= 1:
+            return
+        self._remember_safe_batch_size(max(1, oom_batch_size // 2))
 
     def _raise_terminal_oom(self, attempted_batch_size: int, exc: BaseException) -> None:
         learned_batch_size = None
@@ -100,6 +115,7 @@ class MMDetDetector(PersonDetector):
             chunk = frames[start : start + batch_size]
             chunk_len = len(chunk)
             batch_results, _ = self._infer_chunk_adaptive(inference_detector, chunk)
+            self._report_effective_batch_size_if_needed()
 
             for result in batch_results:
                 frame_dets = []
@@ -139,8 +155,9 @@ class MMDetDetector(PersonDetector):
                 self._raise_terminal_oom(1, exc)
 
             clear_cuda_cache(self.config.device)
+            self._record_oom_ceiling(len(chunk))
             mid = max(1, len(chunk) // 2)
-            logger.warning(
+            logger.debug(
                 "MMDet inference OOM for batch size %d; retrying as %d + %d",
                 len(chunk), mid, len(chunk) - mid,
             )
